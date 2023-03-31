@@ -1,0 +1,7 @@
+In order for blockchain to be more widely adopted in other industries, the blockchain must provide some way of keeping a user's data private and confidential.  However, this notion of privacy seems at odds with the public nature of the blockchain.
+
+For example, one proposed use case for blockchains is to store electronic medical records. In this use case, is it possible to keep a patient's healthcare data completely private and confidential? Also, is it possible for the user to selectively share the blockchain data with certain users (e.g. different doctors)? (I.e. is there access control for blockchain?)
+
+In our project, we plan to examine how (and if!) privacy can be preserved on a public blockchain (both for data stored on chain and the user's transactions). Along the same lines, we will examine how an attacker might extract private information from data stored on the blockchain.
+
+If time permits, we will build a sample blockchain with some of these privacy-preserving techniques. For example, we may implement a simple document sharing tool based on what we learn.
