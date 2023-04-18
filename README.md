@@ -2,8 +2,13 @@
 
 ### Brief
 Private-file-sharing code on top of the p2b-blockchain code.
-The logic is to do this in 3 steps: 1) share public keys, 2) share encrypted symmetric keys, 3) Share the files after encrypting them with the symmetric keys (Kind of similar to Diffie-Hellman, but taking a lot complexity out of it)
+
+### Setup
+1. `python -m venv env` [One time only]
+2. `source env/bin/activate` 
+3. `chmod 777 setup.sh`
+4. `./setup.sh` to install required packages
 
 ### Run
-1. `chmod 777 script.sh`
-2. `./script`
+0. Generate reencryption keys for the blockchain nodes `python src/keygen.py -f <output-file-name>`
+1. Run blockchain nodes `python server.py python3 src/server.py -p 5001 -n 5001 5002 5003 -f <key-gen-file-name>`

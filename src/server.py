@@ -1,8 +1,7 @@
+# Usage: python3 server.py -p 5001 -n 5001 5002 5003 -f 5001.json
 from flask import Flask, request, jsonify
 import logging
 import blockchain as bc
-import rsa
-from cryptography.fernet import Fernet
 import os
 import json
 
@@ -11,15 +10,6 @@ app = Flask(__name__)
 
 # Instantiate the Blockchain
 blockchain = bc.Blockchain()
-public_key, private_key = rsa.newkeys(512)
-# Public keys of all nodes- node id --> key
-print(f"Node {blockchain.node_identifier} public key: {public_key.save_pkcs1().decode('utf-8')}, private key: {private_key.save_pkcs1().decode('utf-8')}")
-
-def generate_symmetric_keys(node_ids):
-    # Generate separate symmetric Keys for sending data to other nodes
-    symm_keys = {str(node_id): Fernet.generate_key() for node_id in node_ids}
-    fernets = {node_id: Fernet(key) for (node_id, key) in symm_keys.items()}
-    return symm_keys, fernets
 
 @app.route('/inform/block', methods=['POST'])
 def new_block_received():
@@ -39,18 +29,14 @@ def new_block_received():
         logging.warning("[RPC: inform/block] Invalid block")
         return 'Invalid block', 400
 
-    blockchain.chain.append(block)    # Add the block to the chain
-    # Modify any other in-memory data structures to reflect the new block
-    # After receiving genesis block, set state to 5001:10000
-    if block.number == 1:
-        blockchain.state.balance['5001'] = 10000
-        blockchain.state.history_log[1] = {'5001': 10000}
-    else:
-        blockchain.state.apply_block(block)
+    # Modify in-memory data structures to reflect the new block
+    blockchain.chain.append(block)   
+    blockchain.state.apply_block(block)
 
-    # TODO: if I am responsible for next block, start mining it (trigger_new_block_mine).
+    # if I am responsible for next block, start mining it (trigger_new_block_mine).
     max_node_id, min_node_id = max(blockchain.nodes), min(blockchain.nodes)
-    next_miner_id = min_node_id + ((block.miner + 1 - min_node_id) % (max_node_id - min_node_id + 1))
+    next_miner_id = min_node_id + ((block.miner + 1 - min_node_id) % \
+        (max_node_id - min_node_id + 1))
     if next_miner_id == blockchain.node_identifier:
         blockchain.trigger_new_block_mine()
 
@@ -72,36 +58,48 @@ def file_data_encrypted(filepath, symm_key):
 
 @app.route('/transactions/new', methods=['POST'])
 def new_transaction():
+    logging.info('[DEBUG] Inside new_transaction')
     values = request.get_json()
+    logging.info(values)
 
     # Check that the required fields are in the POST'ed data
-    required = ['sender', 'recipient', 'amount']
+    required = ['sender', 'recipient']
     if not all(k in values for k in required):
         return 'Missing values', 400
+    
+    logging.info('[DEBUG] Meets requirement')
 
-    sender, recipient, amount, data = values['sender'], values['recipient'], int(values['amount']), {}
+    sender, recipient, data = values['sender'], values['recipient'], {}
+    logging.info(sender)
+    logging.info(type(sender))
+    logging.info(recipient)
+    logging.info(blockchain.node_identifier)
+    logging.info(blockchain.state.id)
 
     # If I'm not sender --> reject, for the time being
-    if blockchain.node_identifier != int(sender):
+    if blockchain.state.id != str(sender):
         return 'Unauthorized', 401
 
-    # I am the sender- send public key by default
-    data['pub_key'] = public_key.save_pkcs1().decode('utf-8') # Default data is encoded public key
-    print(recipient)
-    print(blockchain.state.public_keys)
-    if recipient in blockchain.state.public_keys:
-        symm_key_enc = rsa.encrypt(symm_keys[recipient], blockchain.state.public_keys[recipient]).hex()
-        data['symm_key'] = symm_key_enc
-        print("Sending encrypted symmetric key to recipient: ", recipient)
-    # Send data if it is present
-    if 'data' in values:
-        filename = values['data']
-        filepath = os.path.join(blockchain.state.dir, filename)
-        data['data'] = file_data_encrypted(filepath, fernets[recipient]) # specify filepath in data --> encrypt file and send
-
+    # TODO: Need to get a way for receiver_public_key    
+    # Send data    
+    receiver_public_key_hex = '0333d18ef2e3a6a2489b94853d3f32becdb75cdba7027a9abe2877a9a2c782e0c8'
+    
+    capsule_hex, ciphertext_hex, sender_pk_hex, sender_vk_hex = \
+        blockchain.state.re_encrypt.encrpyt_message(receiver_public_key_hex)
+    data['capsule'] = capsule_hex
+    data['ciphertext'] = ciphertext_hex
+    data['sender_pk'] = sender_pk_hex
+    data['sender_vk'] = sender_vk_hex
+    
+    logging.info('[DEBUG] Returned from encrypt')
+    logging.info(data)
+        
     # Create a new Transaction
-    data = json.dumps(data)
-    blockchain.new_transaction(sender, recipient, amount, data)
+    data_str = json.dumps(data)
+    logging.info(data_str)
+    
+    logging.info('[DEBUG] Calling new txn')
+    blockchain.new_transaction(sender, recipient, data_str)
     return "OK", 201
 
 
@@ -125,22 +123,21 @@ def startexp():
 def health():
     return 'OK', 200
 
-@app.route('/history', methods=['GET'])
-def history():
-    account = request.args.get('account', '')
-    if account == '':
-        return 'Missing values', 400
-    data = blockchain.state.history(account)
-    return jsonify(data), 200
-
 if __name__ == '__main__':
     from argparse import ArgumentParser
     logging.getLogger().setLevel(logging.INFO)
 
     parser = ArgumentParser()
-    parser.add_argument('-p', '--port', default=5000, type=int, help='port to listen on')
-    parser.add_argument('-t', '--blocktime', default=5, type=int, help='Transaction collection time (in seconds) before creating a new block.')
-    parser.add_argument('-n', '--nodes', nargs='+', help='ports of all participating nodes (space separated). e.g. -n 5001 5002 5003', required=True)
+    parser.add_argument('-p', '--port', default=5000, type=int, \
+        help='port to listen on')
+    parser.add_argument('-t', '--blocktime', default=5, type=int, \
+        help='Transaction collection time (in seconds) before creating a new block.')
+    parser.add_argument('-n', '--nodes', nargs='+', \
+        help='ports of all participating nodes (space separated). e.g. -n 5001 5002 5003', \
+        required=True)
+    parser.add_argument('-f', '--filename', type=str, \
+        help='json key filename', \
+        required=True)
 
     args = parser.parse_args()
 
@@ -148,15 +145,12 @@ if __name__ == '__main__':
     port = args.port    
     blockchain.node_identifier = port
     blockchain.block_mine_time = args.blocktime
-    blockchain.state.private_key = private_key
-    blockchain.state.id = port
     blockchain.state.dir = os.path.join(os.getcwd(), str(blockchain.node_identifier))
+    blockchain.state.re_encrypt.key_filename = args.filename
+    blockchain.state.re_encrypt.setup()
+    blockchain.state.id = blockchain.state.re_encrypt.node_id # TODO: Refactor
 
     for nodeport in args.nodes:
         blockchain.nodes.append(int(nodeport))
     
-    symm_keys, fernets = generate_symmetric_keys(blockchain.nodes)
-    print("Symmetric keys: ", symm_keys)
-    print("Fernets: ", fernets)
-
     app.run(host='0.0.0.0', port=port)

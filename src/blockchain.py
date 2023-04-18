@@ -1,52 +1,173 @@
 # forked from https://github.com/dvf/blockchain
-
+# Usage: Called from server.py
 import hashlib
 import json
 import time
 import threading
 import logging
 import uuid
-import rsa
 import os
-from cryptography.fernet import Fernet
+import requests
+import umbral
+import keygenreader as kgr
+from umbral import encrypt, decrypt_reencrypted, generate_kfrags, reencrypt, CapsuleFrag, SecretKey, Signer
 
 import requests
 from flask import Flask, request
 
-class Transaction(object):
-    def __init__(self, sender, recipient, amount, data=""):
-        self.sender = sender # constraint: should exist in state
-        self.recipient = recipient # constraint: need not exist in state. Should exist in state if transaction is applied.
-        self.amount = amount # constraint: sender should have enough balance to send this amount
-        self.data = data # Represents data shared from sender to recipient. Can be None.
+class ReEncryption():
+    def __init__(self):
+        self.key_filename = ''
+        self.re_encrypt_private_key = None
+        self.re_encrypt_public_key = None
+        self.node_id = ''
+        self.re_encrypt_signing_key = None
+        self.re_encrypt_verify_key = None
+        self.re_encrypt_signer = None
+        
+    def setup(self):
+        key_dict = kgr.KeyFileReader(self.key_filename).get_keys()
+        print(key_dict)
+        self.re_encrypt_private_key = SecretKey.from_bytes(bytes.fromhex(key_dict['reencrypt_private_key']))
+        self.re_encrypt_public_key = self.re_encrypt_private_key.public_key()
+        self.node_id = str(bytes(self.re_encrypt_public_key).hex())
+        self.re_encrypt_signing_key = SecretKey.from_bytes(bytes.fromhex(key_dict['reencrypt_signing_key']))
+        self.re_encrypt_verify_key = self.re_encrypt_signing_key.public_key()
+        self.re_encrypt_signer = Signer(self.re_encrypt_signing_key)
+        
+    def decrypt_message(self, txn):
+        logging.info('Inside decrypt_message')
+        txn_data = txn.data
+        logging.info(txn_data)
+        logging.info(type(txn_data))
+        
+        txn_data = json.loads(txn_data)
+        logging.info(type(txn_data))
+        logging.info(txn_data['capsule'])
+        
+        assert 'capsule' in txn_data
+        assert 'ciphertext' in txn_data
+        assert 'sender_pk' in txn_data
+        assert 'sender_vk' in txn_data
+        
+        # Get kfrag from proxy
+        # TODO: Change to cmd arg/config to get proxy reencrypt host
+        kfrag_str = requests.get('http://localhost:5000/get/kfrag/' + txn.sender).text
+        logging.info('kfrag_str')
+        logging.info(kfrag_str)
+        
+        kfrag_hex = json.loads(kfrag_str)['kfrag']
+        logging.info('kfrag_hex')
+        logging.info(kfrag_hex)
+        
+        # Validate kfrag received
+        cfrags = list()    
+        # Assume singe kfrag             
+        cfrag = reencrypt(capsule=umbral.Capsule.from_bytes(bytes.fromhex(txn_data['capsule'])), 
+                          kfrag=umbral.VerifiedKeyFrag.from_verified_bytes(
+                              bytes.fromhex(kfrag_hex)))
+        cfrags.append(cfrag)
+        logging.info('Captured cfrags')
+            
+        suspicious_cfrags = [CapsuleFrag.from_bytes(bytes(cfrag)) for cfrag in cfrags]
+        logging.info('Got suspicious_cfrags')
+        
+        cfrags = [cfrag.verify(umbral.Capsule.from_bytes(bytes.fromhex(txn_data['capsule'])),
+                    verifying_pk=umbral.PublicKey.from_bytes(bytes.fromhex(txn_data['sender_vk'])),
+                    delegating_pk=umbral.PublicKey.from_bytes(bytes.fromhex(txn_data['sender_pk'])),
+                    receiving_pk=self.re_encrypt_public_key,
+                    )
+        for cfrag in suspicious_cfrags]
+        logging.info('Removed suspicious cfrags')
+        
+        # Decrypt the capsule
+        cleartext = decrypt_reencrypted(receiving_sk=self.re_encrypt_private_key,
+                        delegating_pk=umbral.PublicKey.from_bytes(bytes.fromhex(txn_data['sender_pk'])),
+                        capsule=umbral.Capsule.from_bytes(bytes.fromhex(txn_data['capsule'])),
+                        verified_cfrags=cfrags,
+                        ciphertext=bytes.fromhex(txn_data['ciphertext']))
+        
+        logging.info('Decrypted the messsage. cleartext is ')
+        logging.info(cleartext)
+        return cleartext
 
+    # TODO: Remove hardcoding
+    def encrpyt_message(self, receiver_pk_hex):
+        logging.info('Inside encrypt message')
+        
+        plaintext = b'Proxy Re-encryption is cool!'
+        capsule, ciphertext = encrypt(self.re_encrypt_public_key, plaintext)
+        logging.info('Called umbral encrypt')
+        
+        M, N = 1, 1 # the threshold and the total number of fragments
+        kfrags = generate_kfrags(delegating_sk=self.re_encrypt_private_key, 
+                                receiving_pk=umbral.PublicKey.from_bytes(
+                                    bytes.fromhex(receiver_pk_hex)),
+                                signer=self.re_encrypt_signer,
+                                threshold=M,
+                                shares=N)  
+        
+        logging.info('Called umbral kfrags')      
+        logging.info(self.node_id)
+        
+        # give kfrag to proxy
+        post_data = {}
+        post_data['user'] = str(self.node_id)
+        # Note: Only sending 1 kfrag, since we have only 1 proxy
+        post_data['kfrag_hex'] = bytes(kfrags[0]).hex()
+        requests.post('http://localhost:5000/receive/kfrag', 
+                      json=json.dumps(post_data))
+        
+        logging.info('Completed post')
+        
+        return bytes(capsule).hex(), \
+            ciphertext.hex(), \
+            bytes(self.re_encrypt_public_key).hex(), \
+            bytes(self.re_encrypt_verify_key).hex() 
+
+class Transaction(object):
+    def __init__(self, sender, recipient, data=""):
+        # constraint: should exist in state
+        self.sender = sender 
+        # constraint: need not exist in state. 
+        # Should exist in state if transaction is applied.
+        self.recipient = recipient 
+        # Represents data shared from sender to recipient. Can be None.
+        self.data = data 
+        
     def __str__(self) -> str:
-        return "T(%s -> %s: %s, %s)" % (self.sender, self.recipient, self.amount, self.data)
+        return "T(%s -> %s: %s)" % (self.sender, self.recipient, self.data)
 
     def encode(self) -> str:
         return self.__dict__.copy()
 
     @staticmethod
     def decode(data):
-        return Transaction(data['sender'], data['recipient'], data['amount'], data['data'])
+        return Transaction(data['sender'], data['recipient'], data['data'])
 
     def __lt__(self, other):
         if self.sender < other.sender: return True
         if self.sender > other.sender: return False
         if self.recipient < other.recipient: return True
         if self.recipient > other.recipient: return False
-        if self.amount < other.amount: return True
         return False
     
     def __eq__(self, other) -> bool:
-        return self.sender == other.sender and self.recipient == other.recipient and self.amount == other.amount
+        return self.sender == other.sender and \
+          self.recipient == other.recipient and \
+          self.data == other.data
 
 class Block(object):
     def __init__(self, number, transactions, previous_hash, miner):
-        self.number = number # constraint: should be 1 larger than the previous block
-        self.transactions = transactions # constraint: list of transactions. Ordering matters. They will be applied sequentlally.
-        self.previous_hash = previous_hash # constraint: Should match the previous mined block's hash
-        self.miner = miner # constraint: The node_identifier of the miner who mined this block
+        # constraint: should be 1 larger than the previous block
+        self.number = number 
+        # constraint: list of transactions. Ordering matters. 
+        # They will be applied sequentlally.
+        self.transactions = transactions
+        # constraint: Should match the previous mined block's hash 
+        self.previous_hash = previous_hash
+        # constraint: The node_identifier of the miner who mined this block 
+        self.miner = miner 
         self.hash = self._hash()
 
     def _hash(self):
@@ -58,7 +179,12 @@ class Block(object):
         ).hexdigest()
 
     def __str__(self) -> str:
-        return "B(#%s, %s, %s, %s, %s)" % (self.hash[:5], self.number, self.transactions, self.previous_hash, self.miner)
+        return "B(#%s, %s, %s, %s, %s)" % \
+          (self.hash[:5], 
+           self.number, 
+           self.transactions, 
+           self.previous_hash, 
+           self.miner)
     
     def encode(self):
         encoded = self.__dict__.copy()
@@ -72,137 +198,70 @@ class Block(object):
 
 class State(object):
     def __init__(self):
-        # TODO: You might want to think how you will store balance per person.
-        # You don't need to worry about persisting to disk. Storing in memory is fine.
-        self.balance = {}
-        self.history_log = {}
         self.data = {} # Dict from node id to data
         self.public_keys = {} # Dict from node id to public key
-        self.symm_keys = {} # Dict from node id to symmetric key
-        self.private_key = None
-        self.id = None
+        self.id = ''
         self.dir = None
-
+        self.re_encrypt = ReEncryption()
+        
     def encode(self):
         dumped = {}
-        # TODO: Add all person -> balance pairs into `dumped`.
         for (k, v) in self.balance.items():
             dumped[k] = v
         return dumped
 
-    def is_valid_txn(self, txn, curr_state):
-        if txn.sender not in curr_state: return False
-        if txn.amount > curr_state[txn.sender]: return False
+    # TODO
+    def is_valid_txn(self, txn):
         return True
 
+    # TODO: Not being used yet
     def save_data(self, data):
         random_id = str(uuid.uuid4())
         path = os.path.join(self.dir, random_id)
 
         with open(path, 'w') as f:
             f.write(data)
+        
         print("Saving file data to: ", path)
 
-    def handle_txn_data(self, txn, data, public_keys, symm_keys):
+    # Right now, this just decrypts the msg if it is the intended receipent
+    def handle_txn_data(self, txn):
         # Extract data out of txn
         txn_data = txn.data
         txn_data = json.loads(txn_data)
-        if not txn_data: return data, public_keys, symm_keys
-        print("Public keys: ", public_keys)
-        print("Symmetric keys: ", symm_keys)
-
-        if txn.sender not in public_keys and 'pub_key' in txn_data:
-            public_keys[txn.sender] = rsa.PublicKey.load_pkcs1(txn_data['pub_key'].encode('utf-8'))
-            print("Step #1: Received public key from: ", txn.sender)
+        if not txn_data: 
+            return
         
-        # Can decrypt symmetric key only if recipient is self
-        if self.id == int(txn.recipient) and 'symm_key' in txn_data:
-            sender_symm_key = rsa.decrypt(bytes.fromhex(txn_data['symm_key']), self.private_key)
-            symm_keys[txn.sender] = Fernet(sender_symm_key)
-            print("Step #2: Received symmetric key from: ", txn.sender)
-        
-        print("Sender: {txn.sender}, Symmetric keys: ", symm_keys)
-        # Can decrypt data only if recipient is self and symmetric key of sender is known
-        if self.id == int(txn.recipient) and 'data' in txn_data and txn.sender in symm_keys:
-            encrypted_data = txn_data['data']
-            # Convert string to bytes
-            encrypted_data = bytes(encrypted_data, 'utf-8')
-            print("Step #3: Received encrypted data from: ", txn.sender)
-            decoded_data = symm_keys[txn.sender].decrypt(encrypted_data).decode()
-            self.save_data(decoded_data)
+        # Can decrypt only if recipient is self
+        if self.id == txn.recipient:
+            decrypted_message = self.re_encrypt.decrypt_message(txn)
 
-        return data, public_keys, symm_keys
+    def apply_txn(self, txn):
+        self.handle_txn_data(txn)
 
-    def apply_txn(self, txn, tmp_state, block_log={}, data={}, public_keys={}, symm_keys={}):
-        print(txn)
-        tmp_state[txn.sender] -= txn.amount
-        if txn.recipient not in tmp_state:
-            tmp_state[txn.recipient] = txn.amount
-        else:
-            tmp_state[txn.recipient] += txn.amount
-
-        if txn.sender not in block_log: block_log[txn.sender] = -txn.amount
-        else: block_log[txn.sender] -= txn.amount
-        if txn.recipient not in block_log: block_log[txn.recipient] = txn.amount
-        else: block_log[txn.recipient] += txn.amount
-
-        data, public_keys, symm_keys = self.handle_txn_data(txn, data, public_keys, symm_keys)
-        return tmp_state, block_log, data, public_keys, symm_keys
-
+    # returns a list of valid txns
     def validate_txns(self, txns):
         result = []
-        # TODO: returns a list of valid transactions.
-        # You receive a list of transactions, and you try applying them to the state.
-        # If a transaction can be applied, add it to result. (should be included)
-        tmp_state = self.balance.copy()
-        data = self.data.copy()
-        pk = self.public_keys.copy()
-        sk = self.symm_keys.copy()
+        
         for txn in txns:
-            if self.is_valid_txn(txn, tmp_state):
-                tmp_state, _, _, pk, sk = self.apply_txn(txn, tmp_state, {}, data, pk, sk)
-                print("Public keys modified: ", pk)
+            if self.is_valid_txn(txn):
+                self.apply_txn(txn)
                 result.append(txn)
-
-        print("Initial transactions: ", txns)
-        print("Valid transactions: ", result)
-        print("Initial state: ", self.encode())
-        print("Final state: ", tmp_state)
-        print("Result len: %d" % len(result))
-        print("Data: ", data)
-        print("Public keys: ", pk)
-        print("Symmetric keys: ", sk)
+                
         return result
 
     def apply_block(self, block):
         # No need to apply genesis block
         if block.number == 1: return
 
-        # TODO: apply the block to the state.
+        # apply the block to the state
         valid_txns = self.validate_txns(block.transactions)
-        assert len(valid_txns) == len(block.transactions) # TODO: make sure if this is correct
-
-        block_log = {}
+        assert len(valid_txns) == len(block.transactions) 
         for txn in block.transactions:
-            self.balance, block_log, self.data, self.public_keys, self.symm_keys = self.apply_txn(txn, self.balance, block_log, self.data, self.public_keys, self.symm_keys)
+            self.apply_txn(txn)
         
-        self.history_log[block.number] = block_log
-
-        logging.info("Block (#%s) applied to state. %d transactions applied" % (block.hash, len(block.transactions)))
-    
-    def history(self, account):
-        # TODO: return a list of (blockNumber, value changes) that this account went through
-        
-        # Iterate over blocks, and check if this account was involved in any transaction.
-        # Add up all the value changes and get the final change for the block
-        history = []
-
-        for (block_num, block_log) in self.history_log.items():
-            if account in block_log:
-                history.append([block_num, block_log[account]])
-        print(history)
-
-        return history
+        logging.info("Block (#%s) applied to state. %d transactions applied" % \
+            (block.hash, len(block.transactions)))
 
 class Blockchain(object):
     def __init__(self):
@@ -217,8 +276,14 @@ class Blockchain(object):
 
     def get_next_miner(self, current_miner):
         max_node_id, min_node_id = max(self.nodes), min(self.nodes)
-        if current_miner == -1: return min_node_id
-        next_miner_id = min_node_id + ((current_miner + 1 - min_node_id) % (max_node_id - min_node_id + 1))
+        
+        if current_miner == -1: 
+            return min_node_id
+        
+        next_miner_id = min_node_id + \
+            ((current_miner + 1 - min_node_id) % \
+            (max_node_id - min_node_id + 1))
+        
         return next_miner_id
 
     def is_new_block_valid(self, block, received_blockhash):
@@ -229,14 +294,16 @@ class Blockchain(object):
         :param block: A new proposed block
         :return: True if valid, False if not
         """
-        # TODO: check if received block is valid
+        # Checks if received block is valid
         # 1. Hash should match content
         # 2. Previous hash should match previous block
         # 3. Transactions should be valid (all apply to block)
         # 4. Block number should be one higher than previous block
         # 5. miner should be correct (next RR)
         previous_block = None
-        if len(self.chain) > 0: previous_block = self.chain[-1]
+        
+        if len(self.chain) > 0: 
+            previous_block = self.chain[-1]
         current_miner = previous_block.miner if previous_block else -1
         next_miner = self.get_next_miner(current_miner)
         valid_txns = self.state.validate_txns(block.transactions)
@@ -288,19 +355,12 @@ class Blockchain(object):
         else:
             self.current_transactions.sort()
 
-            # TODO: create a new *valid* block with available transactions. Replace the arguments in the line below.
+            # Create a new *valid* block with available transactions. Replace the arguments in the line below.
             valid_txns = self.state.validate_txns(self.current_transactions)
             previous_block = self.chain[-1] if len(self.chain) > 0 else None
-            # My todo: check if previous block is present or if chain is empty
             block = Block(previous_block.number + 1, valid_txns, previous_block.hash, miner)
              
-        # TODO: make changes to in-memory data structures to reflect the new block. Check Blockchain.__init__ method for in-memory datastructures
         self.chain.append(block)
-        if genesis:
-            # TODO: at time of genesis, change state to have '5001': 10000 (person 5001 has 10000)
-            self.state.balance['5001'] = 10000
-            self.state.history_log[1] = {'5001': 10000}
-            print("Initializing state and history in-memory data structures")
         
         self.current_transactions = [txn for txn in self.current_transactions if txn not in valid_txns]
         self.state.apply_block(block)
@@ -311,12 +371,13 @@ class Blockchain(object):
             if node == self.node_identifier: continue
             requests.post(f'http://localhost:{node}/inform/block', json=block.encode())
 
-    def new_transaction(self, sender, recipient, amount, data=""):
+    def new_transaction(self, sender, recipient, data=""):
         """ Add this transaction to the transaction mempool. We will try
         to include this transaction in the next block until it succeeds.
         """
         # TODO: check that transaction is unique.
-        new_txn = Transaction(sender, recipient, amount, data)
+        logging.info('[DEBUG] Inside new transaction')
+        new_txn = Transaction(sender, recipient, data)
         self.current_transactions.append(new_txn)
         
         print("Txns: ", self.current_transactions)

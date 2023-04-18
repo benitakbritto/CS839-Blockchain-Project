@@ -1,0 +1,3 @@
+curl localhost:5000/receive/kfrag -d "{\"user\": \"bar\", \"kfrag\": \"b\"}" -H 'Content-Type: application/json'
+curl localhost:5000/get/kfrag/bar
+
