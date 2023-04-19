@@ -35,24 +35,12 @@ class ReEncryption():
         self.re_encrypt_verify_key = self.re_encrypt_signing_key.public_key()
         self.re_encrypt_signer = Signer(self.re_encrypt_signing_key)
         
-    def decrypt_message(self, txn):
+    def decrypt_message(self, txn_data, sender):
         logging.info('Inside decrypt_message')
-        txn_data = txn.data
-        logging.info(txn_data)
-        logging.info(type(txn_data))
-        
-        txn_data = json.loads(txn_data)
-        logging.info(type(txn_data))
-        logging.info(txn_data['capsule'])
-        
-        assert 'capsule' in txn_data
-        assert 'ciphertext' in txn_data
-        assert 'sender_pk' in txn_data
-        assert 'sender_vk' in txn_data
-        
         # Get kfrag from proxy
+        # TODO: Should we eliminate the proxy by just putting the re-encryption key in the blockchain?
         # TODO: Change to cmd arg/config to get proxy reencrypt host
-        kfrag_str = requests.get('http://localhost:5000/get/kfrag/' + txn.sender).text
+        kfrag_str = requests.get('http://localhost:5000/get/kfrag/' + sender).text
         logging.info('kfrag_str')
         logging.info(kfrag_str)
         
@@ -62,7 +50,7 @@ class ReEncryption():
         
         # Validate kfrag received
         cfrags = list()    
-        # Assume singe kfrag             
+        # Assume singe kfrag
         cfrag = reencrypt(capsule=umbral.Capsule.from_bytes(bytes.fromhex(txn_data['capsule'])), 
                           kfrag=umbral.VerifiedKeyFrag.from_verified_bytes(
                               bytes.fromhex(kfrag_hex)))
@@ -91,14 +79,9 @@ class ReEncryption():
         logging.info(cleartext)
         return cleartext
 
-    # TODO: Remove hardcoding
-    def encrpyt_message(self, receiver_pk_hex):
-        logging.info('Inside encrypt message')
-        
-        plaintext = b'Proxy Re-encryption is cool!'
-        capsule, ciphertext = encrypt(self.re_encrypt_public_key, plaintext)
-        logging.info('Called umbral encrypt')
-        
+    # Generate re-encryption key- kfrags
+    def generate_re_encrypt_key(self, receiver_pk_hex):
+        # Doesn't depend on ciphertext
         M, N = 1, 1 # the threshold and the total number of fragments
         kfrags = generate_kfrags(delegating_sk=self.re_encrypt_private_key, 
                                 receiving_pk=umbral.PublicKey.from_bytes(
@@ -106,8 +89,13 @@ class ReEncryption():
                                 signer=self.re_encrypt_signer,
                                 threshold=M,
                                 shares=N)  
-        
-        logging.info('Called umbral kfrags')      
+        logging.info('Called umbral generate kfrags')
+        return kfrags
+
+    # Send re-encryption key to proxy
+    # TODO: Remove hardcoding of proxy
+    def send_reencryption_key(self, receiver_pk_hex):
+        kfrags = self.generate_re_encrypt_key(receiver_pk_hex)
         logging.info(self.node_id)
         
         # give kfrag to proxy
@@ -118,7 +106,18 @@ class ReEncryption():
         requests.post('http://localhost:5000/receive/kfrag', 
                       json=json.dumps(post_data))
         
-        logging.info('Completed post')
+        logging.info('Completed post- Sent reencryption key to proxy')
+
+    
+    def encrpyt_message(self, receiver_pk_hex, plaintext):
+        logging.info('Inside encrypt message')
+        
+        # TODO: After encrypted data has been put once on chain, include reference to the data on the blockchain subsequently
+        capsule, ciphertext = encrypt(self.re_encrypt_public_key, plaintext)
+        logging.info('Called umbral encrypt')
+
+        self.send_reencryption_key(receiver_pk_hex)
+        logging.info('Generate and send reencryption_key')
         
         return bytes(capsule).hex(), \
             ciphertext.hex(), \
@@ -126,24 +125,26 @@ class ReEncryption():
             bytes(self.re_encrypt_verify_key).hex() 
 
 class Transaction(object):
-    def __init__(self, sender, recipient, data=""):
+    def __init__(self, sender, recipient, data="", id=None):
         # constraint: should exist in state
         self.sender = sender 
         # constraint: need not exist in state. 
         # Should exist in state if transaction is applied.
-        self.recipient = recipient 
+        self.recipient = recipient
+        if id is None: self.id = uuid.uuid4().hex
+        else: self.id = id
         # Represents data shared from sender to recipient. Can be None.
         self.data = data 
         
     def __str__(self) -> str:
-        return "T(%s -> %s: %s)" % (self.sender, self.recipient, self.data)
+        return "T(%s->[%s -> %s: %s])" % (self.id, self.sender, self.recipient, self.data)
 
     def encode(self) -> str:
         return self.__dict__.copy()
 
     @staticmethod
     def decode(data):
-        return Transaction(data['sender'], data['recipient'], data['data'])
+        return Transaction(data['sender'], data['recipient'], data['data'], data['id'])
 
     def __lt__(self, other):
         if self.sender < other.sender: return True
@@ -224,33 +225,54 @@ class State(object):
         
         print("Saving file data to: ", path)
 
+    # Get data from txn with particular id on chain
+    def get_txn_ref_data(self, txn_id, chain):
+        # TODO:  Write this in a better way
+        for block in chain:
+            for txn in block.transactions:
+                if txn.id == txn_id:
+                    return json.loads(txn.data)
+        logging.warn("Could not find txn with id: %s" % txn_id)
+        return None
+
     # Right now, this just decrypts the msg if it is the intended receipent
-    def handle_txn_data(self, txn):
+    def handle_txn_data(self, txn, chain):
         # Extract data out of txn
+        print("Txn: ", txn)
         txn_data = txn.data
         txn_data = json.loads(txn_data)
         if not txn_data: 
             return
-        
+        logging.info(txn_data)
+        logging.info(type(txn_data))
+
+        # Either has data in txn or a reference to data on chain
+        if 'data_txn_ref' in txn_data:
+            txn_ref = txn_data['data_txn_ref']
+            print("Txn ref: ", txn_ref)
+            ref_txn_data = self.get_txn_ref_data(txn_ref, chain)
+            if not ref_txn_data: return # Return if txn ref not found
+            print("Ref txn data: ", ref_txn_data)
+            txn_data = ref_txn_data
+
+        assert 'capsule' in txn_data
+        assert 'sender_pk' in txn_data
+        assert 'sender_vk' in txn_data
+        assert 'ciphertext' in txn_data
+        print("Txn data: ", txn_data)
         # Can decrypt only if recipient is self
         if self.id == txn.recipient:
-            decrypted_message = self.re_encrypt.decrypt_message(txn)
+            decrypted_message = self.re_encrypt.decrypt_message(txn_data, txn.sender)
 
-    def apply_txn(self, txn):
-        self.handle_txn_data(txn)
+    def apply_txn(self, txn, chain):
+        self.handle_txn_data(txn, chain)
 
     # returns a list of valid txns
     def validate_txns(self, txns):
-        result = []
-        
-        for txn in txns:
-            if self.is_valid_txn(txn):
-                self.apply_txn(txn)
-                result.append(txn)
-                
+        result = [txn for txn in txns if self.is_valid_txn(txn)]
         return result
 
-    def apply_block(self, block):
+    def apply_block(self, block, chain):
         # No need to apply genesis block
         if block.number == 1: return
 
@@ -258,7 +280,7 @@ class State(object):
         valid_txns = self.validate_txns(block.transactions)
         assert len(valid_txns) == len(block.transactions) 
         for txn in block.transactions:
-            self.apply_txn(txn)
+            self.apply_txn(txn, chain)
         
         logging.info("Block (#%s) applied to state. %d transactions applied" % \
             (block.hash, len(block.transactions)))
@@ -363,7 +385,7 @@ class Blockchain(object):
         self.chain.append(block)
         
         self.current_transactions = [txn for txn in self.current_transactions if txn not in valid_txns]
-        self.state.apply_block(block)
+        self.state.apply_block(block, self.chain)
 
         logging.info("[MINER] constructed new block with %d transactions. Informing others about: #%s" % (len(block.transactions), block.hash[:5]))
         # broadcast the new block to all nodes.

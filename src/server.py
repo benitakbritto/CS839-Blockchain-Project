@@ -31,7 +31,7 @@ def new_block_received():
 
     # Modify in-memory data structures to reflect the new block
     blockchain.chain.append(block)   
-    blockchain.state.apply_block(block)
+    blockchain.state.apply_block(block, blockchain.chain)
 
     # if I am responsible for next block, start mining it (trigger_new_block_mine).
     max_node_id, min_node_id = max(blockchain.nodes), min(blockchain.nodes)
@@ -84,12 +84,18 @@ def new_transaction():
     # Send data    
     receiver_public_key_hex = '0333d18ef2e3a6a2489b94853d3f32becdb75cdba7027a9abe2877a9a2c782e0c8'
     
-    capsule_hex, ciphertext_hex, sender_pk_hex, sender_vk_hex = \
-        blockchain.state.re_encrypt.encrpyt_message(receiver_public_key_hex)
-    data['capsule'] = capsule_hex
-    data['ciphertext'] = ciphertext_hex
-    data['sender_pk'] = sender_pk_hex
-    data['sender_vk'] = sender_vk_hex
+    # Data_txn_ref refers to the transaction which contains the data
+    if 'data_txn_ref' in values:
+        data['data_txn_ref'] = values['data_txn_ref']
+        blockchain.state.re_encrypt.send_reencryption_key(receiver_public_key_hex)
+    else:
+        message = b'Proxy Re-encryption is cool!' # TODO: Change this to file data
+        capsule_hex, ciphertext_hex, sender_pk_hex, sender_vk_hex = \
+            blockchain.state.re_encrypt.encrpyt_message(receiver_public_key_hex, message)
+        data['capsule'] = capsule_hex
+        data['ciphertext'] = ciphertext_hex
+        data['sender_pk'] = sender_pk_hex
+        data['sender_vk'] = sender_vk_hex
     
     logging.info('[DEBUG] Returned from encrypt')
     logging.info(data)
