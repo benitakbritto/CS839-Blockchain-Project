@@ -35,20 +35,10 @@ class ReEncryption():
         self.re_encrypt_verify_key = self.re_encrypt_signing_key.public_key()
         self.re_encrypt_signer = Signer(self.re_encrypt_signing_key)
         
-    def decrypt_message(self, txn_data, sender):
+    def decrypt_message(self, txn_data):
         logging.info('Inside decrypt_message')
-        # Get kfrag from proxy
-        # TODO: Should we eliminate the proxy by just putting the re-encryption key in the blockchain?
-        # TODO: Change to cmd arg/config to get proxy reencrypt host
-        kfrag_str = requests.get('http://localhost:5000/get/kfrag/' + sender).text
-        logging.info('kfrag_str')
-        logging.info(kfrag_str)
-        
-        kfrag_hex = json.loads(kfrag_str)['kfrag']
-        logging.info('kfrag_hex')
-        logging.info(kfrag_hex)
-        
-        # Validate kfrag received
+        # Get kfrag from txn data
+        kfrag_hex = txn_data['reencryption_key']
         cfrags = list()    
         # Assume singe kfrag
         cfrag = reencrypt(capsule=umbral.Capsule.from_bytes(bytes.fromhex(txn_data['capsule'])), 
@@ -91,33 +81,13 @@ class ReEncryption():
                                 shares=N)  
         logging.info('Called umbral generate kfrags')
         return kfrags
-
-    # Send re-encryption key to proxy
-    # TODO: Remove hardcoding of proxy
-    def send_reencryption_key(self, receiver_pk_hex):
-        kfrags = self.generate_re_encrypt_key(receiver_pk_hex)
-        logging.info(self.node_id)
-        
-        # give kfrag to proxy
-        post_data = {}
-        post_data['user'] = str(self.node_id)
-        # Note: Only sending 1 kfrag, since we have only 1 proxy
-        post_data['kfrag_hex'] = bytes(kfrags[0]).hex()
-        requests.post('http://localhost:5000/receive/kfrag', 
-                      json=json.dumps(post_data))
-        
-        logging.info('Completed post- Sent reencryption key to proxy')
-
     
-    def encrpyt_message(self, receiver_pk_hex, plaintext):
+    def encrypt_message(self, plaintext):
         logging.info('Inside encrypt message')
         
         # TODO: After encrypted data has been put once on chain, include reference to the data on the blockchain subsequently
         capsule, ciphertext = encrypt(self.re_encrypt_public_key, plaintext)
         logging.info('Called umbral encrypt')
-
-        self.send_reencryption_key(receiver_pk_hex)
-        logging.info('Generate and send reencryption_key')
         
         return bytes(capsule).hex(), \
             ciphertext.hex(), \
@@ -246,14 +216,15 @@ class State(object):
         logging.info(txn_data)
         logging.info(type(txn_data))
 
-        # Either has data in txn or a reference to data on chain
-        if 'data_txn_ref' in txn_data:
+        # Either has data in txn or (a reference to data on chain + reencryption key)
+        if 'data_txn_ref' in txn_data and 'reencryption_key' in txn_data:
             txn_ref = txn_data['data_txn_ref']
-            print("Txn ref: ", txn_ref)
+            reencryption_key = txn_data['reencryption_key']
             ref_txn_data = self.get_txn_ref_data(txn_ref, chain)
             if not ref_txn_data: return # Return if txn ref not found
             print("Ref txn data: ", ref_txn_data)
             txn_data = ref_txn_data
+            txn_data['reencryption_key'] = reencryption_key
 
         assert 'capsule' in txn_data
         assert 'sender_pk' in txn_data
@@ -262,7 +233,7 @@ class State(object):
         print("Txn data: ", txn_data)
         # Can decrypt only if recipient is self
         if self.id == txn.recipient:
-            decrypted_message = self.re_encrypt.decrypt_message(txn_data, txn.sender)
+            decrypted_message = self.re_encrypt.decrypt_message(txn_data)
 
     def apply_txn(self, txn, chain):
         self.handle_txn_data(txn, chain)

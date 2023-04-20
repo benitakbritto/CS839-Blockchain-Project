@@ -68,10 +68,9 @@ def upload():
     if blockchain.state.id != str(sender):
         return 'Unauthorized', 401
     
-    public_key_hex = bytes(blockchain.state.re_encrypt.re_encrypt_public_key).hex()
     message = file_data(values['file'])
     capsule_hex, ciphertext_hex, sender_pk_hex, sender_vk_hex = \
-        blockchain.state.re_encrypt.encrpyt_message(public_key_hex, message)
+        blockchain.state.re_encrypt.encrypt_message(message) # Encrypt with own public key
 
     data['capsule'] = capsule_hex
     data['ciphertext'] = ciphertext_hex
@@ -79,7 +78,7 @@ def upload():
     data['sender_vk'] = sender_vk_hex
 
     data_str = json.dumps(data)
-    blockchain.new_transaction(sender, sender, data_str)
+    blockchain.new_transaction(sender, 'sender', data_str)
 
     return "OK", 201
 
@@ -93,65 +92,18 @@ def share():
     required = ['sender', 'recipient', 'data_txn_ref']
     if not all(k in values for k in required):
         return 'Missing values', 400
+    sender, recipient, data = values['sender'], values['recipient'], {}
     # If I'm not sender --> reject
     if blockchain.state.id != str(sender):
         return 'Unauthorized', 401
-    sender, recipient, data = values['sender'], values['recipient'], {}
     receiver_public_key_hex = recipient
+    re_encryption_key_kfrags = blockchain.state.re_encrypt.generate_re_encrypt_key(receiver_public_key_hex)
     data['data_txn_ref'] = values['data_txn_ref']
-    blockchain.state.re_encrypt.send_reencryption_key(receiver_public_key_hex)
+    data['reencryption_key'] = bytes(re_encryption_key_kfrags[0]).hex()
 
     data_str = json.dumps(data)
     blockchain.new_transaction(sender, recipient, data_str)
     return "OK", 201
-
-@app.route('/transactions/new', methods=['POST'])
-def new_transaction():
-    logging.info('[DEBUG] Inside new_transaction')
-    values = request.get_json()
-    logging.info(values)
-
-    # Check that the required fields are in the POST'ed data
-    required = ['sender', 'recipient']
-    if not all(k in values for k in required):
-        return 'Missing values', 400
-    
-    logging.info('[DEBUG] Meets requirement')
-
-    sender, recipient, data = values['sender'], values['recipient'], {}
-
-    # If I'm not sender --> reject, for the time being
-    if blockchain.state.id != str(sender):
-        return 'Unauthorized', 401
-
-    # TODO: Need to get a way for receiver_public_key    
-    # Send data    
-    receiver_public_key_hex = '0333d18ef2e3a6a2489b94853d3f32becdb75cdba7027a9abe2877a9a2c782e0c8'
-    
-    # Data_txn_ref refers to the transaction which contains the data
-    if 'data_txn_ref' in values:
-        data['data_txn_ref'] = values['data_txn_ref']
-        blockchain.state.re_encrypt.send_reencryption_key(receiver_public_key_hex)
-    else:
-        message = b'Proxy Re-encryption is cool!' # TODO: Change this to file data
-        capsule_hex, ciphertext_hex, sender_pk_hex, sender_vk_hex = \
-            blockchain.state.re_encrypt.encrpyt_message(receiver_public_key_hex, message)
-        data['capsule'] = capsule_hex
-        data['ciphertext'] = ciphertext_hex
-        data['sender_pk'] = sender_pk_hex
-        data['sender_vk'] = sender_vk_hex
-    
-    logging.info('[DEBUG] Returned from encrypt')
-    logging.info(data)
-        
-    # Create a new Transaction
-    data_str = json.dumps(data)
-    logging.info(data_str)
-    
-    logging.info('[DEBUG] Calling new txn')
-    blockchain.new_transaction(sender, recipient, data_str)
-    return "OK", 201
-
 
 @app.route('/dump', methods=['GET'])
 def full_chain():
