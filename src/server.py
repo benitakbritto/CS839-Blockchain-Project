@@ -43,18 +43,67 @@ def new_block_received():
     return "OK", 201
 
 
-def file_data_encrypted(filepath, symm_key):
-    if not os.path.isfile(filepath): data = "default hello world message"
+def file_data(filepath):
+    if not os.path.isfile(filepath): data = "Proxy Re-encryption is cool!"
     else:
         f = open(filepath, 'rb')
         data = str(f.read())
+        f.close()
+    # Convert to bytes
+    data = bytes(data, 'utf-8')
+    return data
 
-    # Encrypt huge file data
-    data_encrypted = symm_key.encrypt(data.encode()).decode('utf-8')
-    # Get bytes from string
-    assert(symm_key.decrypt(bytes(data_encrypted, 'utf-8')).decode()) == data
+@app.route('/upload', methods=['POST'])
+def upload():
+    logging.info('[DEBUG] Inside upload')
+    values = request.get_json()
+    logging.info(values)
+    required = ['sender', 'file']
+    if not all(k in values for k in required):
+        return 'Missing values', 400
+    
+    logging.info('[DEBUG] Meets requirement')
 
-    return data_encrypted
+    sender, data = values['sender'], {}
+    if blockchain.state.id != str(sender):
+        return 'Unauthorized', 401
+    
+    public_key_hex = bytes(blockchain.state.re_encrypt.re_encrypt_public_key).hex()
+    message = file_data(values['file'])
+    capsule_hex, ciphertext_hex, sender_pk_hex, sender_vk_hex = \
+        blockchain.state.re_encrypt.encrpyt_message(public_key_hex, message)
+
+    data['capsule'] = capsule_hex
+    data['ciphertext'] = ciphertext_hex
+    data['sender_pk'] = sender_pk_hex
+    data['sender_vk'] = sender_vk_hex
+
+    data_str = json.dumps(data)
+    blockchain.new_transaction(sender, sender, data_str)
+
+    return "OK", 201
+
+@app.route('/share', methods=['POST'])
+def share():
+    logging.info('[DEBUG] Inside share')
+    values = request.get_json()
+    logging.info(values)
+
+    # Check that the required fields are in the POST'ed data
+    required = ['sender', 'recipient', 'data_txn_ref']
+    if not all(k in values for k in required):
+        return 'Missing values', 400
+    # If I'm not sender --> reject
+    if blockchain.state.id != str(sender):
+        return 'Unauthorized', 401
+    sender, recipient, data = values['sender'], values['recipient'], {}
+    receiver_public_key_hex = recipient
+    data['data_txn_ref'] = values['data_txn_ref']
+    blockchain.state.re_encrypt.send_reencryption_key(receiver_public_key_hex)
+
+    data_str = json.dumps(data)
+    blockchain.new_transaction(sender, recipient, data_str)
+    return "OK", 201
 
 @app.route('/transactions/new', methods=['POST'])
 def new_transaction():
@@ -70,11 +119,6 @@ def new_transaction():
     logging.info('[DEBUG] Meets requirement')
 
     sender, recipient, data = values['sender'], values['recipient'], {}
-    logging.info(sender)
-    logging.info(type(sender))
-    logging.info(recipient)
-    logging.info(blockchain.node_identifier)
-    logging.info(blockchain.state.id)
 
     # If I'm not sender --> reject, for the time being
     if blockchain.state.id != str(sender):
