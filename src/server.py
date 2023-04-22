@@ -11,6 +11,7 @@ app = Flask(__name__)
 # Instantiate the Blockchain
 blockchain = bc.Blockchain()
 
+
 @app.route("/inform/block", methods=["POST"])
 def new_block_received():
     values = request.get_json()
@@ -43,6 +44,7 @@ def new_block_received():
 
     return "OK", 201
 
+
 def file_data(filepath):
     if not os.path.isfile(filepath):
         data = "Proxy Re-encryption is cool!"
@@ -54,37 +56,34 @@ def file_data(filepath):
     data = bytes(data, "utf-8")
     return data
 
+
 @app.route("/upload", methods=["POST"])
 def upload():
-    logging.info("[DEBUG] Inside upload")
     values = request.get_json()
-    logging.info(values)
+
+    # Check posted values
     required = ["sender", "file"]
     if not all(k in values for k in required):
         return "Missing values", 400
 
-    logging.info("[DEBUG] Meets requirement")
-
+    # Extract sender and check if sender is correct
     sender, data = values["sender"], {}
     if blockchain.state.id != str(sender):
         return "Unauthorized", 401
 
+    # Extract file data (un-encrypted version)
     message = file_data(values["file"])
-    (
-        capsule_hex,
-        ciphertext_hex,
-        sender_pk_hex,
-        sender_vk_hex,
-    ) = blockchain.state.re_encrypt.encrypt_message(
-        message
-    )  # Encrypt with own public key
+
+    # Encrypt with public key
+    (capsule_hex, ciphertext_hex) = blockchain.state.re_encrypt.encrypt_message(message)
 
     data["capsule"] = capsule_hex
     data["ciphertext"] = ciphertext_hex
-    data["sender_pk"] = sender_pk_hex
-    data["sender_vk"] = sender_vk_hex
-
+    # Cannot add sender_pk and vk in txn as it would break anonymity
+    # data["sender_pk"] = sender_pk_hex
+    # data["sender_vk"] = sender_vk_hex
     data_str = json.dumps(data)
+
     blockchain.new_transaction(sender, "sender", data_str)
 
     return "OK", 201
@@ -92,27 +91,35 @@ def upload():
 
 @app.route("/share", methods=["POST"])
 def share():
-    logging.info("[DEBUG] Inside share")
     values = request.get_json()
-    logging.info(values)
 
     # Check that the required fields are in the POST'ed data
     required = ["sender", "recipient", "data_txn_ref"]
     if not all(k in values for k in required):
         return "Missing values", 400
     sender, recipient, data = values["sender"], values["recipient"], {}
+
     # If I'm not sender --> reject
     if blockchain.state.id != str(sender):
         return "Unauthorized", 401
-    receiver_public_key_hex = recipient
-    re_encryption_key_kfrags = blockchain.state.re_encrypt.generate_re_encrypt_key(
-        receiver_public_key_hex
-    )
+
+    # Create a new txn
+    receiver_pk_hex = recipient
     data["data_txn_ref"] = values["data_txn_ref"]
-    data["reencryption_key"] = bytes(re_encryption_key_kfrags[0]).hex()
+
+    # TODO: Anonymize
+    data["sender_pk"] = bytes(blockchain.state.re_encrypt.re_encrypt_public_key).hex()
+    data["verify_pk"] = bytes(blockchain.state.re_encrypt.re_encrypt_verify_key).hex()
 
     data_str = json.dumps(data)
     blockchain.new_transaction(sender, recipient, data_str)
+
+    # Give proxy the reencryption key
+    capsule = blockchain.state.get_capsule_from_txn_id(
+        values["data_txn_ref"], blockchain.chain
+    )
+    blockchain.state.re_encrypt.send_reencryption_key_to_proxy(receiver_pk_hex, capsule)
+
     return "OK", 201
 
 

@@ -1,2 +1,8 @@
-curl -X POST http://localhost:5001/transactions/new -H 'Content-Type: application/json' -d '{"sender": "03e0852b6d5e5a777ef5f06ba72a5c0f93c40e78d19a11ebad9b31a768ca3030d4", "recipient": "0333d18ef2e3a6a2489b94853d3f32becdb75cdba7027a9abe2877a9a2c782e0c8", "amount": 10}'
+curl -X POST http://localhost:5001/upload -H 'Content-Type: application/json' -d '{"sender": "03e0852b6d5e5a777ef5f06ba72a5c0f93c40e78d19a11ebad9b31a768ca3030d4", "file": "abcd"}'
+
 curl http://localhost:5001/startexp/
+
+
+# Remember to change data_txn_ref based on what was produced during upload
+curl -X POST http://localhost:5001/share -H 'Content-Type: application/json' -d '{"sender": "03e0852b6d5e5a777ef5f06ba72a5c0f93c40e78d19a11ebad9b31a768ca3030d4", "recipient": "0333d18ef2e3a6a2489b94853d3f32becdb75cdba7027a9abe2877a9a2c782e0c8", "data_txn_ref": "13d80740732047fe9c4338a81010cf60"}'
+

@@ -19,9 +19,16 @@ from umbral import (
     SecretKey,
     Signer,
 )
+from enum import Enum
 
 import requests
 from flask import Flask, request
+
+
+class TxnType(Enum):
+    UPLOAD = 1
+    SHARE = 2
+    INVALID = -1
 
 
 class ReEncryption:
@@ -33,6 +40,7 @@ class ReEncryption:
         self.re_encrypt_signing_key = None
         self.re_encrypt_verify_key = None
         self.re_encrypt_signer = None
+        self.proxy_base_url = "http://localhost:5000/"
 
     def setup(self):
         key_dict = kgr.KeyFileReader(self.key_filename).get_keys()
@@ -48,27 +56,59 @@ class ReEncryption:
         self.re_encrypt_verify_key = self.re_encrypt_signing_key.public_key()
         self.re_encrypt_signer = Signer(self.re_encrypt_signing_key)
 
-    def decrypt_message(self, txn_data):
-        logging.info("Inside decrypt_message")
-        # Get kfrag from txn data
-        kfrag_hex = txn_data["reencryption_key"]
-        cfrags = list()
-        # Assume singe kfrag
-        cfrag = reencrypt(
-            capsule=umbral.Capsule.from_bytes(bytes.fromhex(txn_data["capsule"])),
-            kfrag=umbral.VerifiedKeyFrag.from_verified_bytes(bytes.fromhex(kfrag_hex)),
+    def pack_data_for_post(
+        self, sender_pk, receive_pk, kfrag, capsule_hex
+    ) -> dict[str, str]:
+        data_dict = {}
+        data_dict["sender_pk"] = bytes(sender_pk).hex()
+        data_dict["receiver_pk"] = bytes(receive_pk).hex()
+        data_dict["kfrag_hex"] = bytes(kfrag).hex()
+        data_dict["capsule"] = capsule_hex
+
+        return data_dict
+
+    def send_reencryption_key_to_proxy(self, receiver_pk_hex, capsule_hex):
+        receiver_pk = umbral.PublicKey.from_bytes(bytes.fromhex(receiver_pk_hex))
+        kfrags = self.generate_re_encrypt_key(receiver_pk)
+
+        data_dict = self.pack_data_for_post(
+            self.re_encrypt_public_key, receiver_pk, kfrags[0], capsule_hex
         )
-        cfrags.append(cfrag)
-        logging.info("Captured cfrags")
+        r = requests.post(
+            f"{self.proxy_base_url}post/kfrag", json=json.dumps(data_dict)
+        )
+        assert r.status_code == 201
 
-        suspicious_cfrags = [CapsuleFrag.from_bytes(bytes(cfrag)) for cfrag in cfrags]
-        logging.info("Got suspicious_cfrags")
+    def generate_re_encrypt_key(self, receiver_pk):
+        # the threshold and the total number of fragments
+        M, N = 1, 1
+        kfrags = umbral.generate_kfrags(
+            delegating_sk=self.re_encrypt_private_key,
+            receiving_pk=receiver_pk,
+            signer=self.re_encrypt_signer,
+            threshold=M,
+            shares=N,
+        )
 
+        return kfrags
+
+    def get_kfrag_from_proxy(self, txn_data):
+        r = requests.get(
+            f"{self.proxy_base_url}get/kfrag/{txn_data['sender_pk']}/{bytes(self.re_encrypt_public_key).hex()}"
+        )
+        assert r.status_code == 200
+
+        return json.loads(r.text)["kfrag_hex"]
+
+    def verify_cfrag_received_from_proxy(self, txn_data, cfrags):
+        suspicious_cfrags = [
+            CapsuleFrag.from_bytes(bytes.fromhex(cfrag)) for cfrag in cfrags
+        ]
         cfrags = [
             cfrag.verify(
                 umbral.Capsule.from_bytes(bytes.fromhex(txn_data["capsule"])),
                 verifying_pk=umbral.PublicKey.from_bytes(
-                    bytes.fromhex(txn_data["sender_vk"])
+                    bytes.fromhex(txn_data["verify_pk"])
                 ),
                 delegating_pk=umbral.PublicKey.from_bytes(
                     bytes.fromhex(txn_data["sender_pk"])
@@ -77,10 +117,11 @@ class ReEncryption:
             )
             for cfrag in suspicious_cfrags
         ]
-        logging.info("Removed suspicious cfrags")
 
-        # Decrypt the capsule
-        cleartext = decrypt_reencrypted(
+        return cfrags
+
+    def get_cleartext(self, txn_data, cfrags):
+        return decrypt_reencrypted(
             receiving_sk=self.re_encrypt_private_key,
             delegating_pk=umbral.PublicKey.from_bytes(
                 bytes.fromhex(txn_data["sender_pk"])
@@ -90,41 +131,29 @@ class ReEncryption:
             ciphertext=bytes.fromhex(txn_data["ciphertext"]),
         )
 
-        logging.info("Decrypted the messsage. cleartext is ")
+    def decrypt_message(self, txn_data):
+        # Contact proxy to get cfrag
+        kfrag_hex = self.get_kfrag_from_proxy(txn_data)
+        cfrags = list()
+        cfrags.append(kfrag_hex)
+
+        # Verify cfrags received from proxy, as proxy is semi-trusted
+        cfrags = self.verify_cfrag_received_from_proxy(txn_data, cfrags)
+
+        # Decrypt
+        cleartext = self.get_cleartext(txn_data, cfrags)
         logging.info(cleartext)
+
         return cleartext
 
-    # Generate re-encryption key- kfrags
-    def generate_re_encrypt_key(self, receiver_pk_hex):
-        # Doesn't depend on ciphertext
-        M, N = 1, 1  # the threshold and the total number of fragments
-        kfrags = generate_kfrags(
-            delegating_sk=self.re_encrypt_private_key,
-            receiving_pk=umbral.PublicKey.from_bytes(bytes.fromhex(receiver_pk_hex)),
-            signer=self.re_encrypt_signer,
-            threshold=M,
-            shares=N,
-        )
-        logging.info("Called umbral generate kfrags")
-        return kfrags
-
-    def encrypt_message(self, plaintext):
-        logging.info("Inside encrypt message")
-
-        # TODO: After encrypted data has been put once on chain, include reference to the data on the blockchain subsequently
+    def encrypt_message(self, plaintext: str) -> list[str, str]:
         capsule, ciphertext = encrypt(self.re_encrypt_public_key, plaintext)
-        logging.info("Called umbral encrypt")
 
-        return (
-            bytes(capsule).hex(),
-            ciphertext.hex(),
-            bytes(self.re_encrypt_public_key).hex(),
-            bytes(self.re_encrypt_verify_key).hex(),
-        )
+        return (bytes(capsule).hex(), ciphertext.hex())
 
 
 class Transaction(object):
-    def __init__(self, sender, recipient, data="", id=None):
+    def __init__(self, sender, recipient, data, id=None):
         # constraint: should exist in state
         self.sender = sender
         # constraint: need not exist in state.
@@ -226,9 +255,9 @@ class State(object):
             dumped[k] = v
         return dumped
 
-    # TODO
     def is_valid_txn(self, txn):
-        return True
+        txn_type = self.get_txn_type_from_data_field(json.loads(txn.data))
+        return True if txn_type is not TxnType.INVALID else False
 
     # TODO: Not being used yet
     def save_data(self, data):
@@ -240,9 +269,9 @@ class State(object):
 
         print("Saving file data to: ", path)
 
-    # Get data from txn with particular id on chain
+    # Get data from txn data field with particular id on chain
+    # TODO: Refactor
     def get_txn_ref_data(self, txn_id, chain):
-        # TODO:  Write this in a better way
         for block in chain:
             for txn in block.transactions:
                 if txn.id == txn_id:
@@ -250,39 +279,59 @@ class State(object):
         logging.warn("Could not find txn with id: %s" % txn_id)
         return None
 
-    # Right now, this just decrypts the msg if it is the intended receipent
-    def handle_txn_data(self, txn, chain):
-        # Extract data out of txn
-        print("Txn: ", txn)
-        txn_data = txn.data
-        txn_data = json.loads(txn_data)
-        if not txn_data:
+    def get_capsule_from_txn_id(self, txn_id, chain):
+        txn_data = self.get_txn_ref_data(txn_id, chain)
+        return txn_data["capsule"]
+
+    def get_txn_type_from_data_field(self, txn_data: dict[str, str]) -> int:
+        upload_txn_required = ["capsule", "ciphertext"]
+        share_txn_required = ["data_txn_ref", "sender_pk", "verify_pk"]
+
+        if all(k in txn_data for k in upload_txn_required):
+            return TxnType.UPLOAD
+
+        if all(k in txn_data for k in share_txn_required):
+            return TxnType.SHARE
+
+        return TxnType.INVALID
+
+    def apply_share_txn(self, txn, chain):
+        # Get txn ref
+        txn_data = json.loads(txn.data)
+        txn_ref = txn_data["data_txn_ref"]
+        ref_txn_data = self.get_txn_ref_data(txn_ref, chain)
+
+        # Return if txn ref not found
+        if not ref_txn_data:
             return
-        logging.info(txn_data)
-        logging.info(type(txn_data))
 
-        # Either has data in txn or (a reference to data on chain + reencryption key)
-        if "data_txn_ref" in txn_data and "reencryption_key" in txn_data:
-            txn_ref = txn_data["data_txn_ref"]
-            reencryption_key = txn_data["reencryption_key"]
-            ref_txn_data = self.get_txn_ref_data(txn_ref, chain)
-            if not ref_txn_data:
-                return  # Return if txn ref not found
-            print("Ref txn data: ", ref_txn_data)
-            txn_data = ref_txn_data
-            txn_data["reencryption_key"] = reencryption_key
+        print("Ref txn data: ", ref_txn_data)
 
-        assert "capsule" in txn_data
-        assert "sender_pk" in txn_data
-        assert "sender_vk" in txn_data
-        assert "ciphertext" in txn_data
-        print("Txn data: ", txn_data)
+        # Extract info from txn ref
+        txn_data["capsule"] = ref_txn_data["capsule"]
+        txn_data["ciphertext"] = ref_txn_data["ciphertext"]
+
         # Can decrypt only if recipient is self
         if self.id == txn.recipient:
             decrypted_message = self.re_encrypt.decrypt_message(txn_data)
 
+    def apply_txn_data(self, txn, chain):
+        # Extract data field from txn
+        txn_data = json.loads(txn.data)
+
+        if not txn_data:
+            return
+
+        txn_type = self.get_txn_type_from_data_field(txn_data)
+        if txn_type == TxnType.UPLOAD:
+            return
+        elif txn_type == TxnType.SHARE:
+            self.apply_share_txn(txn, chain)
+        else:
+            return
+
     def apply_txn(self, txn, chain):
-        self.handle_txn_data(txn, chain)
+        self.apply_txn_data(txn, chain)
 
     # returns a list of valid txns
     def validate_txns(self, txns):
@@ -297,6 +346,7 @@ class State(object):
         # apply the block to the state
         valid_txns = self.validate_txns(block.transactions)
         assert len(valid_txns) == len(block.transactions)
+
         for txn in block.transactions:
             self.apply_txn(txn, chain)
 
@@ -393,6 +443,7 @@ class Blockchain(object):
         time.sleep(self.block_mine_time)  # Wait for new transactions to come in
         miner = self.node_identifier
 
+        # Form a block of valid txns
         valid_txns = []
         if genesis:
             block = Block(1, [], "0xfeedcafe", miner)
@@ -406,11 +457,13 @@ class Blockchain(object):
                 previous_block.number + 1, valid_txns, previous_block.hash, miner
             )
 
-        self.chain.append(block)
-
+        # Pending txns
         self.current_transactions = [
             txn for txn in self.current_transactions if txn not in valid_txns
         ]
+
+        # Update blockchain state
+        self.chain.append(block)
         self.state.apply_block(block, self.chain)
 
         logging.info(
@@ -423,13 +476,11 @@ class Blockchain(object):
                 continue
             requests.post(f"http://localhost:{node}/inform/block", json=block.encode())
 
-    def new_transaction(self, sender, recipient, data=""):
+    def new_transaction(self, sender, recipient, data):
         """Add this transaction to the transaction mempool. We will try
         to include this transaction in the next block until it succeeds.
         """
         # TODO: check that transaction is unique.
-        logging.info("[DEBUG] Inside new transaction")
         new_txn = Transaction(sender, recipient, data)
         self.current_transactions.append(new_txn)
-
-        print("Txns: ", self.current_transactions)
+        logging.info(new_txn)

@@ -16,20 +16,21 @@ class Proxy_State:
         # value: single kfrag in hex
         self.kfrag_dict = {}
 
-    def form_key(self, sender_pk: str, receiver_pk: str, capsule: str) -> str:
-        return sender_pk + "_" + receiver_pk + "_" + capsule
+    def form_key(self, sender_pk: str, receiver_pk: str) -> str:
+        return sender_pk + "_" + receiver_pk
 
     def update_state(
         self, sender_pk_hex: str, receiver_pk_hex: str, kfrag_hex: str, capsule_hex: str
     ) -> str:
-        _key = self.form_key(sender_pk_hex, receiver_pk_hex, capsule_hex)
+        _key = self.form_key(sender_pk_hex, receiver_pk_hex)
+
         capsule_obj = umbral.Capsule.from_bytes(bytes.fromhex(capsule_hex))
-        kfrag_obj = umbral.VerifiedKeyFrag.from_verified_bytes(
-                              bytes.fromhex(kfrag_hex))
+        kfrag_obj = umbral.VerifiedKeyFrag.from_verified_bytes(bytes.fromhex(kfrag_hex))
+
         self.kfrag_dict[_key] = umbral.reencrypt(capsule=capsule_obj, kfrag=kfrag_obj)
 
-    def get_state(self, sender_pk: str, receiver_pk: str, capsule: str) -> str:
-        _key = self.form_key(sender_pk, receiver_pk, capsule)
+    def get_state(self, sender_pk: str, receiver_pk: str) -> str:
+        _key = self.form_key(sender_pk, receiver_pk)
 
         if _key not in self.kfrag_dict.keys():
             return None
@@ -41,7 +42,6 @@ class Proxy_State:
 def post_kfrag():
     # Extract info from payload
     values = json.loads(request.get_json())
-    logging.info(values)
     required = ["sender_pk", "receiver_pk", "kfrag_hex", "capsule"]
     if not all(req in values for req in required):
         return "Missing values", 400
@@ -56,9 +56,9 @@ def post_kfrag():
     return "OK", 201
 
 
-@app.route("/get/kfrag/<sender_pk>/<receiver_pk>/<capsule>", methods=["GET"])
-def get_kfrag(sender_pk, receiver_pk, capsule):
-    kfrag_hex = proxy_state.get_state(sender_pk, receiver_pk, capsule)
+@app.route("/get/kfrag/<sender_pk>/<receiver_pk>", methods=["GET"])
+def get_kfrag(sender_pk, receiver_pk):
+    kfrag_hex = proxy_state.get_state(sender_pk, receiver_pk)
 
     if kfrag_hex is None:
         return "Missing key", 400
