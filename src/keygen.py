@@ -1,5 +1,8 @@
 # Usage: python3 <python filename> -f <output file name>
 from umbral import SecretKey, Signer
+from pyring.one_time import PrivateKey, PublicKey
+from pyring.ge import *
+from pyring.sc25519 import Scalar
 import json
 
 
@@ -10,11 +13,14 @@ def generate_keys():
     reencrypt_public_key = reencrypt_private_key.public_key()
     reencrypt_signing_key = SecretKey.random()
     reencrypt_verifying_key = reencrypt_signing_key.public_key()
+    receiver_addr_private = PrivateKey.generate()
 
     data["reencrypt_private_key"] = reencrypt_private_key.to_secret_bytes().hex()
     data["reencrypt_public_key"] = bytes(reencrypt_public_key).hex()
     data["reencrypt_signing_key"] = reencrypt_signing_key.to_secret_bytes().hex()
     data["reencrypt_verifying_key"] = bytes(reencrypt_verifying_key).hex()
+    data["receiver_addr_private"] = bytes(receiver_addr_private.scalar.data).hex()
+    data["receiver_addr_public"] = receiver_addr_private.public_key().point.as_bytes().hex()
     return json.dumps(data)
 
 

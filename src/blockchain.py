@@ -1,5 +1,6 @@
 # forked from https://github.com/dvf/blockchain
 # Usage: Called from server.py
+from __future__ import annotations
 import hashlib
 import json
 import time
@@ -23,6 +24,10 @@ from enum import Enum
 
 import requests
 from flask import Flask, request
+from pyring.one_time import PrivateKey, PublicKey
+from pyring.ge import *
+from pyring.sc25519 import Scalar
+import hashlib
 
 
 class TxnType(Enum):
@@ -55,6 +60,9 @@ class ReEncryption:
         )
         self.re_encrypt_verify_key = self.re_encrypt_signing_key.public_key()
         self.re_encrypt_signer = Signer(self.re_encrypt_signing_key)
+
+        self.receive_addr_private = PrivateKey(Scalar(bytes.fromhex(key_dict["receiver_addr_private"]))) # b
+        self.receive_addr_public = self.receive_addr_private.public_key() # B = b * G
 
     def pack_data_for_post(
         self, sender_pk, receive_pk, kfrag, capsule_hex
@@ -295,6 +303,14 @@ class State(object):
 
         return TxnType.INVALID
 
+    # Match stealth address by checking if rB (transmitted by sender) == bR (computed by receiver)
+    def match_stealth_address(self, stealth_address, shared_randomness) -> bool:
+        rB = PublicKey(Point(bytes.fromhex(stealth_address)))
+        R = PublicKey(Point(bytes.fromhex(shared_randomness)))
+        bR = PublicKey(self.re_encrypt.receive_addr_private.scalar * R.point)
+        print("Computed rB and bR: ", rB.point, bR.point)
+        return rB.point == bR.point
+
     def apply_share_txn(self, txn, chain):
         # Get txn ref
         txn_data = json.loads(txn.data)
@@ -312,7 +328,8 @@ class State(object):
         txn_data["ciphertext"] = ref_txn_data["ciphertext"]
 
         # Can decrypt only if recipient is self
-        if self.id == txn.recipient:
+        # Match stealth address by recomputing it using receiver private key and shared randomness
+        if self.match_stealth_address(txn_data["stealth_address"], txn_data["shared_randomness"]):
             decrypted_message = self.re_encrypt.decrypt_message(txn_data)
 
     def apply_txn_data(self, txn, chain):
