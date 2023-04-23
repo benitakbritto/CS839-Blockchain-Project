@@ -98,8 +98,9 @@ def anonymize_receiver(receiver_addr):
     R = r.public_key()
     B = PublicKey(Point(bytes.fromhex(receiver_addr))) # Convert point bytes to Public Key
     rB = PublicKey(r.scalar * B.point)
-    stealth_address = rB.point.as_bytes().hex()
     shared_randomness = R.point.as_bytes().hex()
+    stealth_address = rB.point.as_bytes().hex()
+    stealth_address = hashlib.sha256(bytes.fromhex(stealth_address)).hexdigest().encode().hex()
     return shared_randomness, stealth_address
 
 @app.route("/share", methods=["POST"])
@@ -107,7 +108,7 @@ def share():
     values = request.get_json()
 
     # Check that the required fields are in the POST'ed data
-    required = ["sender", "recipient", "data_txn_ref"]
+    required = ["sender", "recipient", "receiver_addr", "data_txn_ref"]
     if not all(k in values for k in required):
         return "Missing values", 400
     sender, recipient, data = values["sender"], values["recipient"], {}

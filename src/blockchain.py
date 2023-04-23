@@ -305,11 +305,12 @@ class State(object):
 
     # Match stealth address by checking if rB (transmitted by sender) == bR (computed by receiver)
     def match_stealth_address(self, stealth_address, shared_randomness) -> bool:
-        rB = PublicKey(Point(bytes.fromhex(stealth_address)))
+        hashed_rB = stealth_address
         R = PublicKey(Point(bytes.fromhex(shared_randomness)))
         bR = PublicKey(self.re_encrypt.receive_addr_private.scalar * R.point)
-        print("Computed rB and bR: ", rB.point, bR.point)
-        return rB.point == bR.point
+        hashed_bR = hashlib.sha256(bR.point.as_bytes()).hexdigest().encode().hex()
+        print("Computed rB and bR: ", hashed_rB, hashed_bR)
+        return hashed_rB == hashed_bR
 
     def apply_share_txn(self, txn, chain):
         # Get txn ref
