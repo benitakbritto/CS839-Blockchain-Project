@@ -61,8 +61,10 @@ class ReEncryption:
         self.re_encrypt_verify_key = self.re_encrypt_signing_key.public_key()
         self.re_encrypt_signer = Signer(self.re_encrypt_signing_key)
 
-        self.receive_addr_private = PrivateKey(Scalar(bytes.fromhex(key_dict["receiver_addr_private"]))) # b
-        self.receive_addr_public = self.receive_addr_private.public_key() # B = b * G
+        self.receive_addr_private = PrivateKey(
+            Scalar(bytes.fromhex(key_dict["receiver_addr_private"]))
+        )  # b
+        self.receive_addr_public = self.receive_addr_private.public_key()  # B = b * G
 
     def pack_data_for_post(
         self, sender_pk, receive_pk, kfrag, capsule_hex
@@ -330,7 +332,9 @@ class State(object):
 
         # Can decrypt only if recipient is self
         # Match stealth address by recomputing it using receiver private key and shared randomness
-        if self.match_stealth_address(txn_data["stealth_address"], txn_data["shared_randomness"]):
+        if self.match_stealth_address(
+            txn_data["stealth_address"], txn_data["shared_randomness"]
+        ):
             decrypted_message = self.re_encrypt.decrypt_message(txn_data)
 
     def apply_txn_data(self, txn, chain):

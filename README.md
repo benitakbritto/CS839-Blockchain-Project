@@ -8,6 +8,10 @@ Private-file-sharing code on top of the p2b-blockchain code.
 2. `source env/bin/activate` 
 3. `chmod 777 setup.sh`
 4. `./setup.sh` to install required packages
+5. Setup pyring: 
+    - git clone --recurse-submodules https://github.com/bartvm/pyring.git
+    - python setup.py build
+    - python setup.py develop
 
 ### Run
 0. Generate reencryption keys for the blockchain nodes `python src/keygen.py -f <output-file-name>`

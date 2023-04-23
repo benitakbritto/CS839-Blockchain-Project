@@ -96,12 +96,17 @@ def upload():
 def anonymize_receiver(receiver_addr):
     r = PrivateKey.generate()
     R = r.public_key()
-    B = PublicKey(Point(bytes.fromhex(receiver_addr))) # Convert point bytes to Public Key
+    B = PublicKey(
+        Point(bytes.fromhex(receiver_addr))
+    )  # Convert point bytes to Public Key
     rB = PublicKey(r.scalar * B.point)
     shared_randomness = R.point.as_bytes().hex()
     stealth_address = rB.point.as_bytes().hex()
-    stealth_address = hashlib.sha256(bytes.fromhex(stealth_address)).hexdigest().encode().hex()
+    stealth_address = (
+        hashlib.sha256(bytes.fromhex(stealth_address)).hexdigest().encode().hex()
+    )
     return shared_randomness, stealth_address
+
 
 @app.route("/share", methods=["POST"])
 def share():
@@ -112,7 +117,7 @@ def share():
     if not all(k in values for k in required):
         return "Missing values", 400
     sender, recipient, data = values["sender"], values["recipient"], {}
-    receiver_addr = values['receiver_addr']
+    receiver_addr = values["receiver_addr"]
 
     # If I'm not sender --> reject
     if blockchain.state.id != str(sender):
@@ -128,7 +133,9 @@ def share():
     # TODO: Anonymize
     data["sender_pk"] = bytes(blockchain.state.re_encrypt.re_encrypt_public_key).hex()
     data["verify_pk"] = bytes(blockchain.state.re_encrypt.re_encrypt_verify_key).hex()
-    data["shared_randomness"] = shared_randomness  # R = r * G --> r is the secret randomness
+    data[
+        "shared_randomness"
+    ] = shared_randomness  # R = r * G --> r is the secret randomness
     data["stealth_address"] = stealth_address
 
     data_str = json.dumps(data)

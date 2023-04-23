@@ -20,7 +20,9 @@ def generate_keys():
     data["reencrypt_signing_key"] = reencrypt_signing_key.to_secret_bytes().hex()
     data["reencrypt_verifying_key"] = bytes(reencrypt_verifying_key).hex()
     data["receiver_addr_private"] = bytes(receiver_addr_private.scalar.data).hex()
-    data["receiver_addr_public"] = receiver_addr_private.public_key().point.as_bytes().hex()
+    data["receiver_addr_public"] = (
+        receiver_addr_private.public_key().point.as_bytes().hex()
+    )
     return json.dumps(data)
 
 
