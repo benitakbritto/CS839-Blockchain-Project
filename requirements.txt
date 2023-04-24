@@ -2,3 +2,4 @@ umbral
 flask
 requests
 black
+pyring

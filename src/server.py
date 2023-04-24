@@ -5,6 +5,10 @@ import blockchain as bc
 import os
 import json
 
+import hashlib
+from pyring.one_time import PrivateKey, PublicKey
+from pyring.ge import *
+
 # Instantiate the Node
 app = Flask(__name__)
 
@@ -89,15 +93,31 @@ def upload():
     return "OK", 201
 
 
+def anonymize_receiver(receiver_addr):
+    r = PrivateKey.generate()
+    R = r.public_key()
+    B = PublicKey(
+        Point(bytes.fromhex(receiver_addr))
+    )  # Convert point bytes to Public Key
+    rB = PublicKey(r.scalar * B.point)
+    shared_randomness = R.point.as_bytes().hex()
+    stealth_address = rB.point.as_bytes().hex()
+    stealth_address = (
+        hashlib.sha256(bytes.fromhex(stealth_address)).hexdigest().encode().hex()
+    )
+    return shared_randomness, stealth_address
+
+
 @app.route("/share", methods=["POST"])
 def share():
     values = request.get_json()
 
     # Check that the required fields are in the POST'ed data
-    required = ["sender", "recipient", "data_txn_ref"]
+    required = ["sender", "recipient", "receiver_addr", "data_txn_ref"]
     if not all(k in values for k in required):
         return "Missing values", 400
     sender, recipient, data = values["sender"], values["recipient"], {}
+    receiver_addr = values["receiver_addr"]
 
     # If I'm not sender --> reject
     if blockchain.state.id != str(sender):
@@ -107,12 +127,19 @@ def share():
     receiver_pk_hex = recipient
     data["data_txn_ref"] = values["data_txn_ref"]
 
+    # Anonymize receiver address
+    shared_randomness, stealth_address = anonymize_receiver(receiver_addr)
+
     # TODO: Anonymize
     data["sender_pk"] = bytes(blockchain.state.re_encrypt.re_encrypt_public_key).hex()
     data["verify_pk"] = bytes(blockchain.state.re_encrypt.re_encrypt_verify_key).hex()
+    data[
+        "shared_randomness"
+    ] = shared_randomness  # R = r * G --> r is the secret randomness
+    data["stealth_address"] = stealth_address
 
     data_str = json.dumps(data)
-    blockchain.new_transaction(sender, recipient, data_str)
+    blockchain.new_transaction(sender, receiver_addr, data_str)
 
     # Give proxy the reencryption key
     capsule = blockchain.state.get_capsule_from_txn_id(
