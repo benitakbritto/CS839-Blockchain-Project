@@ -13,6 +13,7 @@ app = Flask(__name__)
 # Instantiate the Blockchain
 blockchain = bc.Blockchain()
 
+# TODO: Refactor this file
 
 @app.route("/inform/block", methods=["POST"])
 def new_block_received():
@@ -77,7 +78,7 @@ def upload():
     # Extract file data (un-encrypted version)
     message = file_data(values["file"])
 
-    # Encrypt with reencrypt public key
+    # Encrypt with sender reencrypt public key
     (capsule_hex, ciphertext_hex) = blockchain.state.re_encrypt.encrypt_message(
         blockchain.state.wallet.re_encrypt_public_key, message
     )
@@ -122,8 +123,8 @@ def share():
     blockchain.state.re_encrypt.send_reencryption_key_to_proxy(
         sender_reencrypt_pk,
         sender_reencrypt_sk,
-        sender_reencrypt_signer,
         receiver_r_pk,
+        sender_reencrypt_signer,
         capsule,
     )
 
@@ -134,14 +135,13 @@ def share():
         receiver_pk
     )
     data["shared_randomness"] = shared_randomness
-    data["stealth_address"] = stealth_address
     # TODO: Anonymize
     data["data_txn_ref"] = values["data_txn_ref"]
     data["sender_r_pk"] = bytes(blockchain.state.wallet.re_encrypt_public_key).hex()
     data["verify_r_pk"] = bytes(blockchain.state.wallet.re_encrypt_verify_key).hex()
     data_str = json.dumps(data)
 
-    blockchain.new_transaction(sender_pk, receiver_pk, data_str)
+    blockchain.new_transaction(sender_pk, stealth_address, data_str)
 
     return "OK", 201
 

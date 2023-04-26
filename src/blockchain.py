@@ -379,8 +379,11 @@ class State(object):
         return dumped
 
     def is_valid_txn(self, txn):
+        '''Validate the txn type and ring signature'''
         txn_type = self.get_txn_type_from_data_field(json.loads(txn.data))
-        return True if txn_type is not TxnType.INVALID else False
+        txn_signature = txn.signature
+        
+        return True if (txn_type is not TxnType.INVALID and self.anon.is_signature_valid(txn_signature, txn.__str__())) else False
 
     # Get data from txn data field with particular id on chain
     # TODO: Refactor
@@ -409,7 +412,7 @@ class State(object):
         return TxnType.INVALID
 
     def match_stealth_address(self, stealth_address, shared_randomness) -> bool:
-        """Match stealth address by checking if rB (transmitted by sender) == bR (computed by receiver)"""
+        '''Match stealth address by checking if rB (transmitted by sender) == bR (computed by receiver)'''
         hashed_rB = stealth_address
         R = PublicKey(Point(bytes.fromhex(shared_randomness)))
         bR = PublicKey(self.wallet.private_key_addr.scalar * R.point)
@@ -436,13 +439,14 @@ class State(object):
         # Can decrypt only if recipient is self
         # Match stealth address by recomputing it using receiver private key and shared randomness
         if self.match_stealth_address(
-            txn_data["stealth_address"], txn_data["shared_randomness"]
+            txn.recipient, txn_data["shared_randomness"]
         ):
             decrypted_message = self.re_encrypt.decrypt_message(
                 txn_data,
                 self.wallet.re_encrypt_public_key,
                 self.wallet.re_encrypt_private_key,
             )
+            print(decrypted_message)
 
     def apply_txn_data(self, txn, chain):
         # Extract data field from txn
@@ -609,7 +613,7 @@ class Blockchain(object):
         """Add this transaction to the transaction mempool. We will try
         to include this transaction in the next block until it succeeds.
         """
-        new_txn = Transaction(sender, recipient, data)
+        new_txn = Transaction(recipient, data)
 
         signature_str = self.state.anon.get_ring_signature(
             sender, recipient, new_txn.__str__()
