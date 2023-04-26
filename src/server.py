@@ -6,8 +6,6 @@ import os
 import json
 
 import hashlib
-from pyring.one_time import PrivateKey, PublicKey
-from pyring.ge import *
 
 # Instantiate the Node
 app = Flask(__name__)
@@ -61,51 +59,38 @@ def file_data(filepath):
     return data
 
 
+# TODO: Change test cmds
 @app.route("/upload", methods=["POST"])
 def upload():
     values = request.get_json()
 
     # Check posted values
-    required = ["sender", "file"]
+    required = ["sender_pk", "file"]
     if not all(k in values for k in required):
         return "Missing values", 400
 
     # Extract sender and check if sender is correct
-    sender, data = values["sender"], {}
-    if blockchain.state.id != str(sender):
+    sender_pk = values["sender_pk"]
+    if blockchain.state.wallet.public_key_addr.point.as_bytes().hex() != str(sender_pk):
         return "Unauthorized", 401
 
     # Extract file data (un-encrypted version)
     message = file_data(values["file"])
 
-    # Encrypt with public key
-    (capsule_hex, ciphertext_hex) = blockchain.state.re_encrypt.encrypt_message(message)
+    # Encrypt with reencrypt public key
+    (capsule_hex, ciphertext_hex) = blockchain.state.re_encrypt.encrypt_message(
+        blockchain.state.wallet.re_encrypt_public_key, message
+    )
 
+    # Create new txn
+    data = {}
     data["capsule"] = capsule_hex
     data["ciphertext"] = ciphertext_hex
-    # Cannot add sender_pk and vk in txn as it would break anonymity
-    # data["sender_pk"] = sender_pk_hex
-    # data["sender_vk"] = sender_vk_hex
     data_str = json.dumps(data)
 
-    blockchain.new_transaction(sender, "sender", data_str)
+    blockchain.new_transaction(sender_pk, "sender", data_str)
 
     return "OK", 201
-
-
-def anonymize_receiver(receiver_addr):
-    r = PrivateKey.generate()
-    R = r.public_key()
-    B = PublicKey(
-        Point(bytes.fromhex(receiver_addr))
-    )  # Convert point bytes to Public Key
-    rB = PublicKey(r.scalar * B.point)
-    shared_randomness = R.point.as_bytes().hex()
-    stealth_address = rB.point.as_bytes().hex()
-    stealth_address = (
-        hashlib.sha256(bytes.fromhex(stealth_address)).hexdigest().encode().hex()
-    )
-    return shared_randomness, stealth_address
 
 
 @app.route("/share", methods=["POST"])
@@ -113,39 +98,50 @@ def share():
     values = request.get_json()
 
     # Check that the required fields are in the POST'ed data
-    required = ["sender", "recipient", "receiver_addr", "data_txn_ref"]
+    required = ["sender_pk", "receiver_pk", "receiver_r_pk", "data_txn_ref"]
     if not all(k in values for k in required):
         return "Missing values", 400
-    sender, recipient, data = values["sender"], values["recipient"], {}
-    receiver_addr = values["receiver_addr"]
+    sender_pk, receiver_pk, receiver_r_pk, data = (
+        values["sender"],
+        values["receiver_pk"],
+        values["receiver_r_pk"],
+        {},
+    )
 
     # If I'm not sender --> reject
-    if blockchain.state.id != str(sender):
+    if blockchain.state.wallet.public_key_addr.point.as_bytes().hex() != str(sender_pk):
         return "Unauthorized", 401
-
-    # Create a new txn
-    receiver_pk_hex = recipient
-    data["data_txn_ref"] = values["data_txn_ref"]
-
-    # Anonymize receiver address
-    shared_randomness, stealth_address = anonymize_receiver(receiver_addr)
-
-    # TODO: Anonymize
-    data["sender_pk"] = bytes(blockchain.state.re_encrypt.re_encrypt_public_key).hex()
-    data["verify_pk"] = bytes(blockchain.state.re_encrypt.re_encrypt_verify_key).hex()
-    data[
-        "shared_randomness"
-    ] = shared_randomness  # R = r * G --> r is the secret randomness
-    data["stealth_address"] = stealth_address
-
-    data_str = json.dumps(data)
-    blockchain.new_transaction(sender, receiver_addr, data_str)
 
     # Give proxy the reencryption key
     capsule = blockchain.state.get_capsule_from_txn_id(
         values["data_txn_ref"], blockchain.chain
     )
-    blockchain.state.re_encrypt.send_reencryption_key_to_proxy(receiver_pk_hex, capsule)
+    sender_reencrypt_pk = blockchain.state.wallet.re_encrypt_public_key
+    sender_reencrypt_sk = blockchain.state.wallet.re_encrypt_private_key
+    sender_reencrypt_signer = blockchain.state.wallet.re_encrypt_signer
+    blockchain.state.re_encrypt.send_reencryption_key_to_proxy(
+        sender_reencrypt_pk,
+        sender_reencrypt_sk,
+        sender_reencrypt_signer,
+        receiver_r_pk,
+        capsule,
+    )
+
+    # Create a new txn
+    # Anonymize receiver address
+    # R = r * G --> r is the secret randomness
+    shared_randomness, stealth_address = blockchain.state.anon.anonymize_receiver(
+        receiver_pk
+    )
+    data["shared_randomness"] = shared_randomness
+    data["stealth_address"] = stealth_address
+    # TODO: Anonymize
+    data["data_txn_ref"] = values["data_txn_ref"]
+    data["sender_r_pk"] = bytes(blockchain.state.wallet.re_encrypt_public_key).hex()
+    data["verify_r_pk"] = bytes(blockchain.state.wallet.re_encrypt_verify_key).hex()
+    data_str = json.dumps(data)
+
+    blockchain.new_transaction(sender_pk, receiver_pk, data_str)
 
     return "OK", 201
 
@@ -209,8 +205,9 @@ if __name__ == "__main__":
     blockchain.node_identifier = port
     blockchain.block_mine_time = args.blocktime
     blockchain.state.dir = os.path.join(os.getcwd(), str(blockchain.node_identifier))
-    blockchain.state.re_encrypt.key_filename = args.filename
-    blockchain.state.re_encrypt.setup()
+    blockchain.state.wallet.setup()
+
+    # TODO: Is this needed?
     blockchain.state.id = blockchain.state.re_encrypt.node_id  # TODO: Refactor
 
     for nodeport in args.nodes:

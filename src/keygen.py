@@ -6,23 +6,21 @@ from pyring.sc25519 import Scalar
 import json
 
 
-# Generates the required keys and returns as json
+# Generates the required private keys and returns as json
 def generate_keys():
     data = {}
     reencrypt_private_key = SecretKey.random()
-    reencrypt_public_key = reencrypt_private_key.public_key()
     reencrypt_signing_key = SecretKey.random()
-    reencrypt_verifying_key = reencrypt_signing_key.public_key()
-    receiver_addr_private = PrivateKey.generate()
+    # receiver_addr_private = PrivateKey.generate()
+    private_key_addr = PrivateKey.generate()
 
     data["reencrypt_private_key"] = reencrypt_private_key.to_secret_bytes().hex()
-    data["reencrypt_public_key"] = bytes(reencrypt_public_key).hex()
     data["reencrypt_signing_key"] = reencrypt_signing_key.to_secret_bytes().hex()
-    data["reencrypt_verifying_key"] = bytes(reencrypt_verifying_key).hex()
-    data["receiver_addr_private"] = bytes(receiver_addr_private.scalar.data).hex()
-    data["receiver_addr_public"] = (
-        receiver_addr_private.public_key().point.as_bytes().hex()
-    )
+    # data["receiver_addr_private"] = bytes(receiver_addr_private.scalar.data).hex()
+    # data["receiver_addr_public"] = (
+    #     receiver_addr_private.public_key().point.as_bytes().hex()
+    # )
+    data["private_key_addr"] = private_key_addr.public_key().point.as_bytes().hex()
     return json.dumps(data)
 
 
