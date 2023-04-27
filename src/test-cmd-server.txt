@@ -1,8 +1,0 @@
-curl -X POST http://localhost:5001/upload -H 'Content-Type: application/json' -d '{"sender_pk": "8c8bb8a90137ffd974512cadd5cd188bfa58b31fed2ba2d68357ae8af5285780", "file": "abcd"}'
-
-curl http://localhost:5001/startexp/
-
-
-# Remember to change data_txn_ref based on what was produced during upload
-curl -X POST http://localhost:5001/share -H 'Content-Type: application/json' -d '{"sender_pk": "8c8bb8a90137ffd974512cadd5cd188bfa58b31fed2ba2d68357ae8af5285780", "receiver_pk": "6982b04f6878142fb0222bcd332a2d74279a80cd5875f03b23cb8e6788e3a996", "receiver_r_pk": "02655818d04d7fdbfdda96028dcfddca1f97438e053055c1f05f464b51d4350537", "data_txn_ref": "96fbc4e20ca14514828ee006a8edd534"}'
-

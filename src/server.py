@@ -63,7 +63,8 @@ def file_data(filepath):
 @app.route("/upload", methods=["POST"])
 def upload():
     values = request.get_json()
-
+    print(values)
+    
     # Check posted values
     required = ["sender_pk", "file"]
     if not all(k in values for k in required):
