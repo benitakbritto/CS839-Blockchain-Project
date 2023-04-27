@@ -18,7 +18,7 @@ blockchain = bc.Blockchain()
 @app.route("/inform/block", methods=["POST"])
 def new_block_received():
     values = request.get_json()
-    logging.info("Received: " + str(values))
+    # logging.info("Received: " + str(values))
 
     # Check that the required fields are in the POST'ed data
     required = ["number", "transactions", "miner", "previous_hash", "hash"]
@@ -63,7 +63,6 @@ def file_data(filepath):
 @app.route("/upload", methods=["POST"])
 def upload():
     values = request.get_json()
-    print(values)
     
     # Check posted values
     required = ["sender_pk", "file"]

@@ -10,7 +10,7 @@ import json
 base_url = "http://localhost:"
 
 def call_upload(sender_port, data_to_upload):
-    key_dict_sender = kgr.KeyFileReader(f'{str(sender_port)}.json').get_keys()
+    key_dict_sender = kgr.KeyFileReader(f'data/{str(sender_port)}.json').get_keys()
     
     data = {}
     data["sender_pk"] = key_dict_sender["public_key_addr"]
@@ -20,8 +20,8 @@ def call_upload(sender_port, data_to_upload):
     assert r.status_code == 201
 
 def call_share(sender_port, receiver_port, txn_ref):
-    key_dict_sender = kgr.KeyFileReader(f'{str(sender_port)}.json').get_keys()
-    key_dict_receiver = kgr.KeyFileReader(f'{str(receiver_port)}.json').get_keys()
+    key_dict_sender = kgr.KeyFileReader(f'data/{str(sender_port)}.json').get_keys()
+    key_dict_receiver = kgr.KeyFileReader(f'data/{str(receiver_port)}.json').get_keys()
     
     data = {}
     data["sender_pk"] = key_dict_sender["public_key_addr"]

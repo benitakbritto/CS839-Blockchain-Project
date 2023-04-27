@@ -262,7 +262,7 @@ class ReEncryption:
 
         # Decrypt
         cleartext = self.get_cleartext(txn_data, cfrags, receiver_sk)
-        logging.info(cleartext)
+        logging.info(f"!!! Decrpted message content: {cleartext} !!!")
 
         return cleartext
 
@@ -418,7 +418,6 @@ class State(object):
         R = PublicKey(Point(bytes.fromhex(shared_randomness)))
         bR = PublicKey(self.wallet.private_key_addr.scalar * R.point)
         hashed_bR = hashlib.sha256(bR.point.as_bytes()).hexdigest().encode().hex()
-        print("Computed rB and bR: ", hashed_rB, hashed_bR)
         return hashed_rB == hashed_bR
 
     def apply_share_txn(self, txn, chain):
@@ -431,7 +430,6 @@ class State(object):
         if not ref_txn_data:
             return
 
-        print("Ref txn data: ", ref_txn_data)
 
         # Extract info from txn ref
         txn_data["capsule"] = ref_txn_data["capsule"]
@@ -442,12 +440,14 @@ class State(object):
         if self.match_stealth_address(
             txn.recipient, txn_data["shared_randomness"]
         ):
+            logging.info("!!! I am the recipient !!!")
             decrypted_message = self.re_encrypt.decrypt_message(
                 txn_data,
                 self.wallet.re_encrypt_public_key,
                 self.wallet.re_encrypt_private_key,
             )
-            print(decrypted_message)
+        else:
+            logging.info("!!! I am not the recipient !!!")
 
     def apply_txn_data(self, txn, chain):
         # Extract data field from txn
@@ -484,10 +484,10 @@ class State(object):
         for txn in block.transactions:
             self.apply_txn(txn, chain)
 
-        logging.info(
-            "Block (#%s) applied to state. %d transactions applied"
-            % (block.hash, len(block.transactions))
-        )
+        # logging.info(
+        #     "Block (#%s) applied to state. %d transactions applied"
+        #     % (block.hash, len(block.transactions))
+        # )
 
 
 class Blockchain(object):
@@ -573,7 +573,7 @@ class Blockchain(object):
 
         :return: New Block
         """
-        logging.info("[MINER] waiting for new transactions before mining new block...")
+        # logging.info("[MINER] waiting for new transactions before mining new block...")
         time.sleep(self.block_mine_time)  # Wait for new transactions to come in
         miner = self.node_identifier
 
@@ -600,10 +600,10 @@ class Blockchain(object):
         self.chain.append(block)
         self.state.apply_block(block, self.chain)
 
-        logging.info(
-            "[MINER] constructed new block with %d transactions. Informing others about: #%s"
-            % (len(block.transactions), block.hash[:5])
-        )
+        # logging.info(
+        #     "[MINER] constructed new block with %d transactions. Informing others about: #%s"
+        #     % (len(block.transactions), block.hash[:5])
+        # )
         # broadcast the new block to all nodes.
         for node in self.nodes:
             if node == self.node_identifier:
@@ -622,4 +622,4 @@ class Blockchain(object):
         new_txn.set_signature(signature_str)
         self.current_transactions.append(new_txn)
 
-        logging.info(new_txn)
+        logging.info(f"!!! New transaction received: {new_txn} !!!")
