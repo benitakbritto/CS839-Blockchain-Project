@@ -10,14 +10,18 @@ workspace
 |____src  
 
 ### Setup
-1. Setup pyring: 
+1. `mkdir workspace`
+2. `cd workspace`
+3. `python -m venv env`
+4. `python -m venv env` 
+5. Setup pyring: 
     - `git clone --recurse-submodules https://github.com/bartvm/pyring.git`
     - `cd pyring`
     - `python setup.py build`
     - `python setup.py develop`
-2. Setup this repository:
-    - `python -m venv env` [One time only]
-    - `source env/bin/activate` 
+6. Setup this repository:
+    - `git clone ...`
+    - `cd <repo>`
     - `chmod 777 setup.sh`
     - `./setup.sh` to install required packages
 

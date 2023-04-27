@@ -58,10 +58,10 @@ class Wallet:
         self.re_encrypt_verify_key = self.re_encrypt_signing_key.public_key()
         self.re_encrypt_signer = Signer(self.re_encrypt_signing_key)
 
-        self.private_key = PrivateKey(
+        self.private_key_addr = PrivateKey(
             Scalar(bytes.fromhex(key_dict["private_key_addr"]))
         )  # b
-        self.receive_addr_public = self.receive_addr_private.public_key()  # B = b * G
+        self.public_key_addr = self.private_key_addr.public_key()  # B = b * G
 
 
 class TxnType(Enum):
@@ -75,7 +75,7 @@ class Anonymization:
         # Ideally this should belong to a random number
         self.num_keys = 10
 
-    def get_ring_signature(self, pk: str, sk: str, message: str) -> str:
+    def get_ring_signature(self, pk: PublicKey, sk: PrivateKey, message: str) -> str:
         # decide actual sender's position in the ring
         signer_index = randint(0, self.num_keys - 1)
 
@@ -83,8 +83,8 @@ class Anonymization:
         public_keys = []
         for key_index in range(self.num_keys):
             if key_index == signer_index:
-                public_key = PublicKey(Point(bytes.fromhex(pk)))
-                signer_key = PrivateKey(Scalar(bytes.fromhex(sk)))
+                public_key = pk
+                signer_key = sk
             else:
                 # For now, we are generating random (pk, sk) pairs
                 # Ideally, we would know a few pks and only generate sks
@@ -94,7 +94,7 @@ class Anonymization:
             public_keys.append(public_key.point)
 
         signature = ring_sign(
-            bytes(message), public_keys, signer_key.scalar, signer_index
+            bytes(message, 'utf-8'), public_keys, signer_key.scalar, signer_index
         )
 
         # Serialize signature
@@ -109,7 +109,7 @@ class Anonymization:
         assert len(signature.r) == self.num_keys
         assert len(signature.public_keys) == self.num_keys
 
-        return ring_verify(bytes.fromhex(message), signature)
+        return ring_verify(bytes(message, 'utf-8'), signature)
 
     # TODO
     def anonymize_txn_ref(self, txn_ref_id: str):
@@ -275,7 +275,7 @@ class ReEncryption:
 
 
 class Transaction(object):
-    def __init__(self, recipient, data, id=None):
+    def __init__(self, recipient, data, id=None, signature=None):
         self.recipient = recipient
         if id is None:
             self.id = uuid.uuid4().hex
@@ -283,7 +283,8 @@ class Transaction(object):
             self.id = id
         # Represents data shared from sender to recipient. Can be None.
         self.data = data
-        self.signature = ""
+        if signature is not None:
+            self.signature = signature
 
     def set_signature(self, signature_str: str):
         self.signature = signature_str
@@ -616,7 +617,7 @@ class Blockchain(object):
         new_txn = Transaction(recipient, data)
 
         signature_str = self.state.anon.get_ring_signature(
-            sender, recipient, new_txn.__str__()
+            self.state.wallet.public_key_addr, self.state.wallet.private_key_addr, new_txn.__str__()
         )
         new_txn.set_signature(signature_str)
         self.current_transactions.append(new_txn)

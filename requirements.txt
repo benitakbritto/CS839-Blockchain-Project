@@ -3,3 +3,4 @@ flask
 requests
 black
 pyring
+pyasn1

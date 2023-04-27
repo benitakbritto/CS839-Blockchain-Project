@@ -60,7 +60,6 @@ def file_data(filepath):
     return data
 
 
-# TODO: Change test cmds
 @app.route("/upload", methods=["POST"])
 def upload():
     values = request.get_json()
@@ -89,7 +88,7 @@ def upload():
     data["ciphertext"] = ciphertext_hex
     data_str = json.dumps(data)
 
-    blockchain.new_transaction(sender_pk, "sender", data_str)
+    blockchain.new_transaction(sender_pk, "", data_str)
 
     return "OK", 201
 
@@ -205,10 +204,10 @@ if __name__ == "__main__":
     blockchain.node_identifier = port
     blockchain.block_mine_time = args.blocktime
     blockchain.state.dir = os.path.join(os.getcwd(), str(blockchain.node_identifier))
-    blockchain.state.wallet.setup()
+    blockchain.state.wallet.setup(args.filename)
 
     # TODO: Is this needed?
-    blockchain.state.id = blockchain.state.re_encrypt.node_id  # TODO: Refactor
+    # blockchain.state.id = blockchain.state.re_encrypt.node_id 
 
     for nodeport in args.nodes:
         blockchain.nodes.append(int(nodeport))
