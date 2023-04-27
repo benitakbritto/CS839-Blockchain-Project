@@ -102,10 +102,10 @@ def share():
     if not all(k in values for k in required):
         return "Missing values", 400
     sender_pk, receiver_pk, receiver_r_pk, data = (
-        values["sender"],
+        values["sender_pk"],
         values["receiver_pk"],
         values["receiver_r_pk"],
-        {},
+        {}
     )
 
     # If I'm not sender --> reject

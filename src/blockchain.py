@@ -239,7 +239,7 @@ class ReEncryption:
         return decrypt_reencrypted(
             receiving_sk=receiver_sk,
             delegating_pk=umbral.PublicKey.from_bytes(
-                bytes.fromhex(txn_data["sender_pk"])
+                bytes.fromhex(txn_data["sender_r_pk"])
             ),
             capsule=umbral.Capsule.from_bytes(bytes.fromhex(txn_data["capsule"])),
             verified_cfrags=cfrags,
