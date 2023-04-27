@@ -32,5 +32,6 @@ workspace
 2. Run blockchain nodes `python3 src/server.py -p 5001 -n 5001 5002 5003 -f <key-gen-file-name>`
 3. `curl http://localhost:5001/startexp/`
 4. To invoke the APIs, use: 
+    - `python run.py -f startexp -s 5001` to start
     - `python src/run.py -f upload -s 5001 -d <file to share>` to upload  
     - `python src/run.py -f share -s 5001 -r 5002 -t <txn ref of upload>` to share

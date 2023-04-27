@@ -183,7 +183,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-t",
         "--blocktime",
-        default=5,
+        default=2,
         type=int,
         help="Transaction collection time (in seconds) before creating a new block.",
     )
