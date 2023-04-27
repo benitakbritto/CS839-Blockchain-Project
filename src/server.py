@@ -152,7 +152,7 @@ def full_chain():
         "pending_transactions": [
             txn.encode() for txn in sorted(blockchain.current_transactions)
         ],
-        "state": blockchain.state.encode(),
+        # "state": blockchain.state.encode(),
     }
     return jsonify(response), 200
 
@@ -182,7 +182,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-t",
         "--blocktime",
-        default=5,
+        default=1,
         type=int,
         help="Transaction collection time (in seconds) before creating a new block.",
     )
