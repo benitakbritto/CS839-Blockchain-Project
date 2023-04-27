@@ -623,3 +623,5 @@ class Blockchain(object):
         self.current_transactions.append(new_txn)
 
         logging.info(f"!!! New transaction received: {new_txn} !!!")
+
+        return new_txn.id

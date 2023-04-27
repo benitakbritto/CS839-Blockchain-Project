@@ -18,6 +18,7 @@ def call_upload(sender_port, data_to_upload):
     
     r = requests.post(f"{base_url}{str(sender_port)}/upload", json=data)
     assert r.status_code == 201
+    print("Txn id: ", r.text)
 
 def call_share(sender_port, receiver_port, txn_ref):
     key_dict_sender = kgr.KeyFileReader(f'data/{str(sender_port)}.json').get_keys()
@@ -31,6 +32,10 @@ def call_share(sender_port, receiver_port, txn_ref):
     
     r = requests.post(f"{base_url}{str(sender_port)}/share", json=data)
     assert r.status_code == 201
+
+def call_startexp(sender_port):
+    r = requests.get(f"{base_url}{str(sender_port)}/startexp/")
+    assert r.status_code == 200
 
 if __name__ == "__main__":
     # CLI
@@ -59,3 +64,5 @@ if __name__ == "__main__":
         call_upload(args.senderport, args.data) 
     elif args.function == "share":
         call_share(args.senderport, args.receiverport, args.txnref)
+    elif args.function == "startexp":
+        call_startexp(args.senderport)

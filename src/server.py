@@ -88,9 +88,9 @@ def upload():
     data["ciphertext"] = ciphertext_hex
     data_str = json.dumps(data)
 
-    blockchain.new_transaction(sender_pk, "", data_str)
+    txn_id = blockchain.new_transaction(sender_pk, "", data_str)
 
-    return "OK", 201
+    return txn_id, 201
 
 
 @app.route("/share", methods=["POST"])
@@ -113,6 +113,7 @@ def share():
         return "Unauthorized", 401
 
     # Give proxy the reencryption key
+    print(values["data_txn_ref"])
     capsule = blockchain.state.get_capsule_from_txn_id(
         values["data_txn_ref"], blockchain.chain
     )
@@ -162,7 +163,7 @@ def startexp():
     print("Starting experiment with genesis block")
     if blockchain.node_identifier == min(blockchain.nodes):
         blockchain.trigger_new_block_mine(genesis=True)
-    return "OK"
+    return "OK", 200
 
 
 @app.route("/health", methods=["GET"])
