@@ -1,4 +1,4 @@
-# CS839-Blockchain-Project
+# Yelling Secrets into a Crowd: Private Document Sharing on a Public Blockchain
 
 ### Brief
 Private-file-sharing code on top of the p2b-blockchain code.
