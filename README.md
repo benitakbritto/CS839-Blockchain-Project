@@ -1,7 +1,7 @@
 # Yelling Secrets into a Crowd: Private Document Sharing on a Public Blockchain
 
 ### Brief
-Private-file-sharing code on top of the p2b-blockchain code.
+Private-file-sharing code on top of the [p2b-blockchain code](https://gist.github.com/darkryder/5a92647cd268458239720eec44a5d8a7).
 
 ### File Structure
 workspace  
