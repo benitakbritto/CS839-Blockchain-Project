@@ -6,7 +6,7 @@ Private-file-sharing code on top of the p2b-blockchain code.
 ### File Structure
 workspace  
 |__pyring  
-|__CS839-Blockchain-Project (this repo). 
+|__CS839-Blockchain-Project (this repo)  
 |____src // contains our source code  
 |_______data // contains test data we used to run our code  
 |____Deliverables // contains documents we submitted as part of our course project  
