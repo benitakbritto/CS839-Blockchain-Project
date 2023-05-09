@@ -6,8 +6,11 @@ Private-file-sharing code on top of the p2b-blockchain code.
 ### File Structure
 workspace  
 |__pyring  
-|__CS839-Blockchain-Project  
-|____src  
+|__CS839-Blockchain-Project (this repo)
+|____src // contains our source code  
+|_______data // contains test data we used to run our code  
+|____Deliverables // contains documents we submitted as part of our course project  
+
 
 ### Setup
 1. `mkdir workspace`
@@ -35,3 +38,6 @@ workspace
     - `python run.py -f startexp -s 5001` to start
     - `python src/run.py -f upload -s 5001 -d <file to share>` to upload  
     - `python src/run.py -f share -s 5001 -r 5002 -t <txn ref of upload>` to share
+
+### Demo
+Link to our demo can be found [here](https://drive.google.com/file/d/1iiJntQNEOz9gPwWnbHgYZVDrS7mmgfvX/view?usp=sharing)
