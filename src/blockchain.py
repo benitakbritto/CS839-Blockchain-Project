@@ -3,276 +3,22 @@
 from __future__ import annotations
 import hashlib
 import json
-from random import randint, random
+
 import time
 import threading
 import logging
 import uuid
-import os
-from xmlrpc.client import boolean
 import requests
-from pyring.one_time import PrivateKey, PublicKey, ring_sign, ring_verify
+from pyring.one_time import PublicKey
 from pyring.ge import *
-from pyring.sc25519 import Scalar
-from pyring.serialize import import_pem, export_pem
-import umbral
-import keygenreader as kgr
-from umbral import (
-    encrypt,
-    decrypt_reencrypted,
-    generate_kfrags,
-    reencrypt,
-    CapsuleFrag,
-    SecretKey,
-    Signer,
-)
-from enum import Enum
 
 import requests
-from flask import Flask, request
 import hashlib
 
-
-class Wallet:
-    def __init__(self):
-        self.re_encrypt_private_key = None
-        self.re_encrypt_public_key = None
-        self.re_encrypt_signing_key = None
-        self.re_encrypt_verify_key = None
-        self.re_encrypt_signer = None
-
-        self.public_key_addr = None
-        self.private_key_addr = None
-
-    def setup(self, file_name):
-        """@brief: init keys by reading the file"""
-        key_dict = kgr.KeyFileReader(file_name).get_keys()
-        self.re_encrypt_private_key = SecretKey.from_bytes(
-            bytes.fromhex(key_dict["reencrypt_private_key"])
-        )
-        self.re_encrypt_public_key = self.re_encrypt_private_key.public_key()
-
-        self.re_encrypt_signing_key = SecretKey.from_bytes(
-            bytes.fromhex(key_dict["reencrypt_signing_key"])
-        )
-        self.re_encrypt_verify_key = self.re_encrypt_signing_key.public_key()
-        self.re_encrypt_signer = Signer(self.re_encrypt_signing_key)
-
-        self.private_key_addr = PrivateKey(
-            Scalar(bytes.fromhex(key_dict["private_key_addr"]))
-        )  # b
-        self.public_key_addr = self.private_key_addr.public_key()  # B = b * G
-
-
-class TxnType(Enum):
-    UPLOAD = 1
-    SHARE = 2
-    INVALID = -1
-
-
-class Anonymization:
-    def __init__(self):
-        # Ideally this should belong to a random number
-        self.num_keys = 10
-
-    def get_ring_signature(self, pk: PublicKey, sk: PrivateKey, message: str) -> str:
-        # decide actual sender's position in the ring
-        signer_index = randint(0, self.num_keys - 1)
-
-        # get the public keys to form the ring
-        public_keys = []
-        for key_index in range(self.num_keys):
-            if key_index == signer_index:
-                public_key = pk
-                signer_key = sk
-            else:
-                # For now, we are generating random (pk, sk) pairs
-                # Ideally, we would know a few pks and only generate sks
-                private_key = PrivateKey.generate()
-                public_key = private_key.public_key()
-
-            public_keys.append(public_key.point)
-
-        signature = ring_sign(
-            bytes(message, 'utf-8'), public_keys, signer_key.scalar, signer_index
-        )
-
-        # Serialize signature
-        return export_pem(signature)
-
-    def is_signature_valid(self, signature: str, message: str) -> bool:
-        # deserialize
-        signature = import_pem(signature)
-
-        # perform checks
-        assert len(signature.c) == self.num_keys
-        assert len(signature.r) == self.num_keys
-        assert len(signature.public_keys) == self.num_keys
-
-        return ring_verify(bytes(message, 'utf-8'), signature)
-
-    # TODO
-    def anonymize_txn_ref(self, txn_ref_id: str):
-        pass
-
-    # TODO
-    def anonymize_sender_reencrypt_pk(self, pk: str):
-        pass
-
-    # TODO
-    def anonymize_sender_reencrypt_vk(self, vk: str):
-        pass
-
-    def anonymize_receiver(self, receiver_addr: str):
-        # generate shared randomness
-        r = PrivateKey.generate()
-        R = r.public_key()
-
-        # Convert point bytes to Public Key
-        B = PublicKey(Point(bytes.fromhex(receiver_addr)))
-        rB = PublicKey(r.scalar * B.point)
-
-        shared_randomness = R.point.as_bytes().hex()
-
-        stealth_address = rB.point.as_bytes().hex()
-        stealth_address = (
-            hashlib.sha256(bytes.fromhex(stealth_address)).hexdigest().encode().hex()
-        )
-
-        return shared_randomness, stealth_address
-
-
-class ReEncryption:
-    def __init__(self):
-        self.proxy_base_url = "http://localhost:5000/"
-
-    def pack_data_for_post(
-        self,
-        sender_pk: umbral.PublicKey,
-        receive_pk: umbral.PublicKey,
-        kfrag: umbral.VerifiedKeyFrag,
-        capsule_hex: str,
-    ) -> dict[str, str]:
-        data_dict = {}
-        data_dict["sender_pk"] = bytes(sender_pk).hex()
-        data_dict["receiver_pk"] = bytes(receive_pk).hex()
-        data_dict["kfrag_hex"] = bytes(kfrag).hex()
-        data_dict["capsule"] = capsule_hex
-
-        return data_dict
-
-    def send_reencryption_key_to_proxy(
-        self,
-        sender_pk: umbral.PublicKey,
-        sender_sk: umbral.SecretKey,
-        receiver_pk_hex: str,
-        sender_signer: umbral.Signer,
-        capsule_hex: str,
-    ):
-        receiver_pk = umbral.PublicKey.from_bytes(bytes.fromhex(receiver_pk_hex))
-        kfrags = self.generate_re_encrypt_key(sender_sk, receiver_pk, sender_signer)
-
-        data_dict = self.pack_data_for_post(
-            sender_pk, receiver_pk, kfrags[0], capsule_hex
-        )
-        r = requests.post(
-            f"{self.proxy_base_url}post/kfrag", json=json.dumps(data_dict)
-        )
-        assert r.status_code == 201
-
-    def generate_re_encrypt_key(
-        self,
-        sender_sk: umbral.SecretKey,
-        receiver_pk: umbral.PublicKey,
-        sender_signer: umbral.Signer,
-    ):
-        # the threshold and the total number of fragments
-        M, N = 1, 1
-        kfrags = umbral.generate_kfrags(
-            delegating_sk=sender_sk,
-            receiving_pk=receiver_pk,
-            signer=sender_signer,
-            threshold=M,
-            shares=N,
-        )
-
-        return kfrags
-
-    def get_kfrag_from_proxy(
-        self, txn_data: dict[str, str], receiver_pk: umbral.PublicKey
-    ) -> str:
-        r = requests.get(
-            f"{self.proxy_base_url}get/kfrag/{txn_data['sender_r_pk']}/{bytes(receiver_pk).hex()}"
-        )
-        assert r.status_code == 200
-
-        return json.loads(r.text)["kfrag_hex"]
-
-    def verify_cfrag_received_from_proxy(
-        self, txn_data: dict[str, str], cfrags: list[str], receiver_pk: umbral.PublicKey
-    ) -> list[umbral.VerifiedCapsuleFrag]:
-        suspicious_cfrags = [
-            CapsuleFrag.from_bytes(bytes.fromhex(cfrag)) for cfrag in cfrags
-        ]
-        cfrags = [
-            cfrag.verify(
-                umbral.Capsule.from_bytes(bytes.fromhex(txn_data["capsule"])),
-                verifying_pk=umbral.PublicKey.from_bytes(
-                    bytes.fromhex(txn_data["verify_r_pk"])
-                ),
-                delegating_pk=umbral.PublicKey.from_bytes(
-                    bytes.fromhex(txn_data["sender_r_pk"])
-                ),
-                receiving_pk=receiver_pk,
-            )
-            for cfrag in suspicious_cfrags
-        ]
-
-        return cfrags
-
-    def get_cleartext(
-        self,
-        txn_data: dict[str, str],
-        cfrags: list[umbral.VerifiedCapsuleFrag],
-        receiver_sk: umbral.SecretKey,
-    ) -> bytes:
-        return decrypt_reencrypted(
-            receiving_sk=receiver_sk,
-            delegating_pk=umbral.PublicKey.from_bytes(
-                bytes.fromhex(txn_data["sender_r_pk"])
-            ),
-            capsule=umbral.Capsule.from_bytes(bytes.fromhex(txn_data["capsule"])),
-            verified_cfrags=cfrags,
-            ciphertext=bytes.fromhex(txn_data["ciphertext"]),
-        )
-
-    def decrypt_message(
-        self,
-        txn_data: dict[str, str],
-        receiver_pk: umbral.PublicKey,
-        receiver_sk: umbral.SecretKey,
-    ):
-        # Contact proxy to get cfrag
-        kfrag_hex = self.get_kfrag_from_proxy(txn_data, receiver_pk)
-        cfrags = list()
-        cfrags.append(kfrag_hex)
-
-        # Verify cfrags received from proxy, as proxy is semi-trusted
-        cfrags = self.verify_cfrag_received_from_proxy(txn_data, cfrags, receiver_pk)
-
-        # Decrypt
-        cleartext = self.get_cleartext(txn_data, cfrags, receiver_sk)
-        logging.info(f"!!! Decrpted message content: {cleartext} !!!")
-
-        return cleartext
-
-    def encrypt_message(
-        self, sender_pk: umbral.PublicKey, plaintext: str
-    ) -> list[str, str]:
-        capsule, ciphertext = encrypt(sender_pk, plaintext)
-
-        return (bytes(capsule).hex(), ciphertext.hex())
-
+from constants import TxnType
+from reencryption import ReEncryption
+from anonymization import Anonymization
+from wallet import Wallet
 
 class Transaction(object):
     def __init__(self, recipient, data, id=None, signature=None):
@@ -319,7 +65,6 @@ class Transaction(object):
             and self.id == other.id
             and self.signature == other.signature
         )
-
 
 class Block(object):
     def __init__(self, number, transactions, previous_hash, miner):

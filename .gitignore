@@ -2,3 +2,6 @@
 **/__pycache__
 **/.pytest_cache
 src/500*/
+data/
+myenv/
+*.log
