@@ -9,8 +9,8 @@ from umbral import (
 )
 
 class ReEncryption:
-    def __init__(self):
-        self.proxy_base_url = "http://localhost:6000/"
+    def __init__(self, proxy_url):
+        self.proxy_url = proxy_url
 
     def pack_data_for_post(
         self,
@@ -42,7 +42,7 @@ class ReEncryption:
             sender_pk, receiver_pk, kfrags[0], capsule_hex
         )
         r = requests.post(
-            f"{self.proxy_base_url}post/kfrag", json=json.dumps(data_dict)
+            f"{self.proxy_url}post/kfrag", json=json.dumps(data_dict)
         )
         assert r.status_code == 201
 
@@ -68,7 +68,7 @@ class ReEncryption:
         self, txn_data: dict[str, str], receiver_pk: umbral.PublicKey
     ) -> str:
         r = requests.get(
-            f"{self.proxy_base_url}get/kfrag/{txn_data['sender_r_pk']}/{bytes(receiver_pk).hex()}"
+            f"{self.proxy_url}get/kfrag/{txn_data['sender_r_pk']}/{bytes(receiver_pk).hex()}"
         )
         assert r.status_code == 200
 
