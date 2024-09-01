@@ -114,8 +114,8 @@ class State(object):
         # TODO: This should hold pyring pk
         self.id = ""
         self.dir = None
-        self.re_encrypt = ReEncryption()
-        self.anon = Anonymization()
+        self.re_encrypt = ReEncryption(proxy_url="http://localhost:6000/")
+        self.anon = Anonymization(num_keys=10)
         self.wallet = Wallet()
 
     def encode(self):

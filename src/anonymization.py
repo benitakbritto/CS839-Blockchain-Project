@@ -2,13 +2,13 @@ from pyring.one_time import PrivateKey, PublicKey, ring_sign, ring_verify
 from pyring.ge import *
 from pyring.serialize import import_pem, export_pem
 
-from random import randint, random
+from random import randint
 
 
 class Anonymization:
-    def __init__(self):
+    def __init__(self, num_keys):
         # Ideally this should belong to a random number
-        self.num_keys = 10
+        self.num_keys = num_keys
 
     def get_ring_signature(self, pk: PublicKey, sk: PrivateKey, message: str) -> str:
         # decide actual sender's position in the ring

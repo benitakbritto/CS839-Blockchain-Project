@@ -6,6 +6,7 @@ import os
 import json
 
 import hashlib
+from utils import file_data
 
 # Instantiate the Node
 app = Flask(__name__)
@@ -46,18 +47,6 @@ def new_block_received():
         blockchain.trigger_new_block_mine()
 
     return "OK", 201
-
-
-def file_data(filepath):
-    if not os.path.isfile(filepath):
-        data = "Proxy Re-encryption is cool!"
-    else:
-        f = open(filepath, "rb")
-        data = str(f.read())
-        f.close()
-    # Convert to bytes
-    data = bytes(data, "utf-8")
-    return data
 
 
 @app.route("/upload", methods=["POST"])
