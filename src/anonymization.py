@@ -1,3 +1,4 @@
+import hashlib
 from pyring.one_time import PrivateKey, PublicKey, ring_sign, ring_verify
 from pyring.ge import *
 from pyring.serialize import import_pem, export_pem

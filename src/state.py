@@ -8,6 +8,7 @@ from reencryption import ReEncryption
 from anonymization import Anonymization
 from wallet import Wallet
 from pyring.one_time import PublicKey
+from pyring.ge import *
 
 class State(object):
     def __init__(self):
@@ -16,7 +17,7 @@ class State(object):
         # TODO: This should hold pyring pk
         self.id = ""
         self.dir = None
-        self.re_encrypt = ReEncryption(proxy_url="http://localhost:6000")
+        self.re_encrypt = ReEncryption(proxy_url="http://localhost:6000/")
         self.anon = Anonymization(num_keys=10)
         self.wallet = Wallet()
 
